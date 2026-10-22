@@ -188,6 +188,13 @@ int main(int argc, char **argv) {
         else if (argv[i][0] != '-') root = arg_root;
     }
     rt_paths_init();  // the data root becomes the working directory (runtime/paths.h)
+    for (int i = 1; i + 1 < argc; i++)  // --extract-nsp <file>: extract the game files and exit (runtime/ui/launcher.mm)
+        if (!strcmp(argv[i], "--extract-nsp")) {
+            extern int launcher_extract_nsp_cli(const char *nsp);
+            static char nsp[1024];
+            if (!realpath(argv[i + 1], nsp)) snprintf(nsp, sizeof nsp, "%s", argv[i + 1]);
+            exit(launcher_extract_nsp_cli(nsp));
+        }
     extern bool start_point_init(void);  // LARECOMP_START (runtime/startpoint.c): boot from a saved point
     if (start_point_init()) skip_launcher = true;
     extern void sampler_start(void);  // LARECOMP_SAMPLE (runtime/sampler.c): where the guest threads spend time

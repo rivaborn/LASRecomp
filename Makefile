@@ -149,7 +149,13 @@ CXXFLAGS += -fsanitize=address -fno-omit-frame-pointer
 LDFLAGS  += $(ASAN_LIBDIR)/libclang_rt.asan_dynamic-x86_64.dll.a $(ASAN_LIBDIR)/libclang_rt.asan_dynamic_runtime_thunk-x86_64.a
 endif
 
-all: $(EXE) $(if $(GEN_SRC),$(GAMELIB))
+all: $(EXE) $(if $(GEN_SRC),$(GAMELIB) $(B)/game.buildid)
+
+# The build id (NSO header, 32 bytes at 0x40) of the main the game code was generated from: the start screen checks
+# the player's extracted game files against it (runtime/ui/launcher.mm, games other than Link's Awakening).
+$(B)/game.buildid: $(EXEFS)/main
+	@mkdir -p $(dir $@)
+	@od -An -tx1 -j64 -N32 $< | tr -d ' \n' > $@
 
 # (generated code inlines cpu.h, simd.h and simd_fp.h: a change to any of them rebuilds it)
 GEN_HDRS := runtime/cpu.h runtime/simd.h runtime/simd_fp.h

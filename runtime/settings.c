@@ -77,16 +77,29 @@ void settings_load(void) {
     loaded = true;
     FILE *f = fopen(SETTINGS_FILE, "r");
     if (!f) return;
-    char line[256];
+    char line[1200];
     bool tip_key = false, aspect_key = false;
     while (fgets(line, sizeof line, f)) {
         char key[64];
-        char val[128];
-        if (sscanf(line, " %63[^= ] = %127[^\n]", key, val) < 1) continue;
-        if (!strcmp(key, "rando_seed")) {
-            if (sscanf(line, " %63[^= ] = %127[^\n]", key, val) != 2) val[0] = 0;
-            strlcpy(g_settings.rando_seed, val, sizeof g_settings.rando_seed);
-            continue;
+        char val[1100];
+        if (sscanf(line, " %63[^= ] = %1099[^\n]", key, val) < 1) continue;
+        {   // text values (a seed, paths, a controller): the rest of the line, possibly empty
+            struct { const char *k; char *v; size_t n; } text[] = {
+                {"rando_seed", g_settings.rando_seed, sizeof g_settings.rando_seed},
+                {"nsp_path", g_settings.nsp_path, sizeof g_settings.nsp_path},
+                {"keys_dir", g_settings.keys_dir, sizeof g_settings.keys_dir},
+                {"hactool", g_settings.hactool, sizeof g_settings.hactool},
+                {"pad_guid", g_settings.pad_guid, sizeof g_settings.pad_guid},
+                {"pad_name", g_settings.pad_name, sizeof g_settings.pad_name},
+            };
+            bool text_key = false;
+            for (size_t i = 0; i < sizeof text / sizeof text[0] && !text_key; i++)
+                if (!strcmp(key, text[i].k)) {
+                    if (sscanf(line, " %63[^= ] = %1099[^\n]", key, val) != 2) val[0] = 0;
+                    strlcpy(text[i].v, val, text[i].n);
+                    text_key = true;
+                }
+            if (text_key) continue;
         }
         if (!strcmp(key, "aspect")) g_settings.aspect = !strcmp(val, "original") ? ASPECT_ORIGINAL : ASPECT_UNLOCKED;
         else if (!strcmp(key, "fullscreen")) g_settings.fullscreen = atoi(val) != 0;
@@ -181,5 +194,7 @@ void settings_save(void) {
     fprintf(f, "tunic = %s\nhearts = %s\n", g_tunic_colours[g_settings.tunic], g_heart_colours[g_settings.hearts]);
     bind_settings_save(f);
     fprintf(f, "rando_seed = %s\n", g_settings.rando_seed);
+    fprintf(f, "nsp_path = %s\nkeys_dir = %s\nhactool = %s\n", g_settings.nsp_path, g_settings.keys_dir, g_settings.hactool);
+    fprintf(f, "pad_guid = %s\npad_name = %s\n", g_settings.pad_guid, g_settings.pad_name);
     fclose(f);
 }

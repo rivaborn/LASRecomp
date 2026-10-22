@@ -40,6 +40,7 @@ extern "C" {
 #include "gamebuild.h"
 #include "gamelib.h"
 #include "romfs_build.h"
+#include "nsp_extract.h"
 #include "settings.h"
 #include "input_bind.h"
 void controls_bindings_draw(float scale);  // ui/controls_ui.mm
@@ -168,8 +169,72 @@ static bool file_exists(const std::string &p) {
     return stat(p.c_str(), &st) == 0;
 }
 
+// ------------------------------------------------------------------ games other than Link's Awakening: an .nsp
+// The game code of such a game is built in a source checkout (make GAME=...), which writes game.buildid into the data
+// root: the build id of the main it was generated from. The player picks their .nsp, the keys folder and hactool; the
+// files are extracted into the data root's extracted/ (runtime/nsp_extract.c) and checked against that build id.
+static std::string g_expect_id;  // game.buildid (64 hex digits); "" = Link's Awakening (its own setup below)
+static bool nsp_mode(void) {
+    static int known = -1;
+    if (known < 0) {
+        char id[80] = "";
+        FILE *f = fopen("game.buildid", "r");  // (the data root is the working directory)
+        if (f) {
+            if (!fgets(id, sizeof id, f)) id[0] = 0;
+            fclose(f);
+        }
+        id[strcspn(id, "\r\n ")] = 0;
+        known = strlen(id) == 64 && strncmp(id, "ae16f71e002af8cb", 16) != 0;  // (not Link's Awakening v1.0.0)
+        if (known) g_expect_id = id;
+    }
+    return known == 1;
+}
+
+static std::string keys_dir(void) {
+    if (g_settings.keys_dir[0]) return g_settings.keys_dir;
+#ifdef _WIN32
+    const char *a = getenv("APPDATA");
+    return a ? std::string(a) + "\\eden\\keys" : "";
+#else
+    const char *h = getenv("HOME");
+    return h ? std::string(h) + "/.switch" : "";
+#endif
+}
+
+// hactool: the chosen one, else next to the app or in the data root (NXDECOMP_HACTOOL, as the nxdecomp pipeline)
+static std::string find_hactool(void) {
+    std::vector<std::string> c;
+    if (g_settings.hactool[0]) c.push_back(g_settings.hactool);
+    char exe[1024];
+    if (plat_exe_path(exe, sizeof exe)) {
+        std::string d = exe;
+        size_t s = d.find_last_of("/\\");
+        if (s != std::string::npos) c.push_back(d.substr(0, s) + "/hactool" PLAT_EXE_SUFFIX);
+    }
+    c.push_back(std::string(rt_data_root()) + "/hactool" PLAT_EXE_SUFFIX);
+    if (getenv("NXDECOMP_HACTOOL")) c.push_back(getenv("NXDECOMP_HACTOOL"));
+    for (auto &p : c) {
+        struct stat st;
+        if (stat(p.c_str(), &st) == 0 && S_ISREG(st.st_mode)) return p;
+    }
+    return "";
+}
+
+static std::string check_nsp_files(const std::string &root) {
+    char id[65];
+    if (!nsp_main_build_id((root + "/exefs/main").c_str(), id)) return "No game files";
+    if (g_expect_id != id) return "Different game or version than the game code was built for";
+    struct stat st;
+    if (stat((root + "/romfs.bin").c_str(), &st) != 0) return "Game data missing";
+    if (g_settings.nsp_path[0] && stat((root + "/.source").c_str(), &st) == 0 &&
+        !nsp_source_matches(root.c_str(), g_settings.nsp_path))
+        return "The chosen .nsp isn't the one these files came from: extract again";
+    return "";
+}
+
 // The copied game files alone ("" = there), without the game code built from them
 static std::string check_copied_files(const std::string &root) {
+    if (nsp_mode()) return check_nsp_files(root);
     FILE *f = fopen((root + "/exefs/main").c_str(), "rb");
     if (!f) return "No game files";
     uint8_t id[8] = {0};
@@ -352,12 +417,76 @@ done:
     return NULL;
 }
 
-// ------------------------------------------------------------------ folder dialog (SDL calls back on any thread)
+// .nsp extraction (nsp_mode): runtime/nsp_extract.c on this thread, its progress for the bar
+static std::atomic<float> g_nsp_frac{-1};  // -1: not extracting
+static void nsp_progress(double f, const char *step) {
+    g_nsp_frac = (float)f;
+    if (step) set_job(step);
+}
+static void *nsp_thread(void *) {
+    g_nsp_frac = 0;
+    pthread_mutex_lock(&g_lock);
+    std::string nsp = g_settings.nsp_path, keys = keys_dir();
+    pthread_mutex_unlock(&g_lock);
+    std::string hactool = find_hactool();
+    NspExtractOpts o = {nsp.c_str(), keys.c_str(), hactool.c_str(), g_root.c_str()};
+    char why[512] = "";
+    if (!nsp_extract(&o, nsp_progress, why, sizeof why)) {
+        set_job("Extracting the game files failed", true, why);
+    } else {
+        std::string w = check_game_files(g_root);
+        if (w.empty()) set_job("Game files ready.");
+        else set_job(w, true, "The package holds another game or version than the game code was built for.");
+    }
+    g_nsp_frac = -1;
+    pthread_mutex_lock(&g_lock);
+    g_busy = false;
+    pthread_mutex_unlock(&g_lock);
+    return NULL;
+}
+
+// lasrecomp --extract-nsp <file.nsp>: the same extraction without the start screen (scripts, tests). Keys and hactool
+// as the start screen finds them; the .nsp becomes the chosen one. Exit code 0 when the files are ready to play.
+static void cli_progress(double f, const char *step) {
+    static int last = -1;
+    if (step) fprintf(stderr, "[extract] %s\n", step);
+    if ((int)(f * 20) != last) fprintf(stderr, "[extract] %3d%%\n", (int)(f * 100)), last = (int)(f * 20);
+}
+extern "C" int launcher_extract_nsp_cli(const char *nsp) {
+    settings_load();
+    if (!nsp_mode()) {
+        fprintf(stderr, "[extract] this build's game code has no game.buildid (Link's Awakening uses the start screen's setup)\n");
+        return 2;
+    }
+    snprintf(g_settings.nsp_path, sizeof g_settings.nsp_path, "%s", nsp);
+    settings_save();
+    g_root = "extracted";
+    std::string keys = keys_dir(), hactool = find_hactool();
+    NspExtractOpts o = {nsp, keys.c_str(), hactool.c_str(), g_root.c_str()};
+    char why[512] = "";
+    if (!nsp_extract(&o, cli_progress, why, sizeof why)) {
+        fprintf(stderr, "[extract] failed: %s\n", why);
+        return 1;
+    }
+    std::string w = check_game_files(g_root);
+    fprintf(stderr, "[extract] %s\n", w.empty() ? "game files ready" : w.c_str());
+    return w.empty() ? 0 : 1;
+}
+
+// ------------------------------------------------------------------ file / folder dialogs (SDL calls back on any thread)
+static std::atomic<bool> g_settings_changed{false};  // a dialog set a path: saved from the UI thread
 static void SDLCALL picked(void *, const char *const *files, int) {
     if (!files || !files[0]) return;
     pthread_mutex_lock(&g_lock);
     g_src = files[0];
     pthread_mutex_unlock(&g_lock);
+}
+static void SDLCALL picked_path(void *dest, const char *const *files, int) {  // dest: a g_settings path field
+    if (!files || !files[0]) return;
+    pthread_mutex_lock(&g_lock);
+    snprintf((char *)dest, 1024, "%s", files[0]);
+    pthread_mutex_unlock(&g_lock);
+    g_settings_changed = true;
 }
 
 // ------------------------------------------------------------------ the user's own Nintendo fonts (not shipped)
@@ -1274,7 +1403,7 @@ extern "C" void launcher_run(const char *root) {
                 // explanation, and choosing again opens the picker again
                 std::string src_v = src.empty() ? "Choose..." : "Selected";
                 auto check_left_of_value = [&](const std::string &v) {
-                    if (v != "Selected") return;
+                    if (v != "Selected" && v != "Found") return;
                     ImVec2 rb = ImGui::GetItemRectMax(), ra = ImGui::GetItemRectMin();
                     float fs = ImGui::GetFontSize(), vw = ImGui::CalcTextSize(v.c_str()).x;
                     float x = rb.x - 16 * sc - vw - fs * 0.95f, cy = (ra.y + rb.y) * 0.5f, u = fs * 0.62f;
@@ -1300,7 +1429,65 @@ extern "C" void launcher_run(const char *root) {
                     if (focus_first > 0 && focus_first--) ImGui::SetFocusID(ImGui::GetItemID(), ImGui::GetCurrentWindow());
                 };
                 opt_begin("##files", sc);
-                if (!ready) {
+                if (g_settings_changed.exchange(false)) settings_save(), status = check_game_files(g_root);
+                if (!ready && nsp_mode()) {
+                    // games other than Link's Awakening: the player's .nsp, extracted with hactool (runtime/nsp_extract.c)
+                    pthread_mutex_lock(&g_lock);
+                    std::string nsp = g_settings.nsp_path;
+                    pthread_mutex_unlock(&g_lock);
+                    std::string kd = keys_dir(), hp = find_hactool();
+                    struct stat kst;
+                    bool keys_ok = !kd.empty() && stat((kd + "/prod.keys").c_str(), &kst) == 0;
+                    opt_section("Your copy of the game");
+                    std::string nsp_v = nsp.empty() ? "Choose..." : "Selected";
+                    std::string nsp_d = "Your own dump of the game as an .nsp package, with the update the game code was "
+                                        "built for in the same package. The game isn't included.";
+                    if (!nsp.empty()) nsp_d += "\n\nChosen: " + nsp;
+                    if (busy) opt_disable_next();
+                    if (opt_action("Game package (.nsp)", nsp_v.c_str(), nsp_d.c_str(), true)) {
+                        static const SDL_DialogFileFilter nsp_filter[] = {{"Nintendo Switch package (*.nsp)", "nsp"}};
+                        SDL_ShowOpenFileDialog(picked_path, g_settings.nsp_path, win, nsp_filter, 1, NULL, false);
+                    }
+                    check_left_of_value(nsp_v);
+                    first_row();
+                    std::string keys_v = keys_ok ? "Found" : "Choose...";
+                    std::string keys_d = "The folder with your console's keys (prod.keys), which decrypt the package. By "
+                                         "default Eden's keys folder. Only hactool reads them; they're never copied.";
+                    if (!kd.empty()) keys_d += "\n\nFolder: " + kd + (keys_ok ? "" : "\nprod.keys isn't there.");
+                    if (busy) opt_disable_next();
+                    if (opt_action("Keys folder", keys_v.c_str(), keys_d.c_str(), true))
+                        SDL_ShowOpenFolderDialog(picked_path, g_settings.keys_dir, win, NULL, false);
+                    check_left_of_value(keys_v);
+                    std::string hac_v = hp.empty() ? "Choose..." : "Found";
+                    std::string hac_d = "hactool reads the package (the same tool the nxdecomp pipeline uses). By default "
+                                        "it's looked for next to LAS Recomp.";
+                    hac_d += hp.empty() ? "\n\nNot found: choose hactool" PLAT_EXE_SUFFIX "." : "\n\nUsing: " + hp;
+                    if (busy) opt_disable_next();
+                    if (opt_action("hactool", hac_v.c_str(), hac_d.c_str(), true)) {
+#ifdef _WIN32
+                        static const SDL_DialogFileFilter exe_filter[] = {{"hactool (*.exe)", "exe"}};
+                        SDL_ShowOpenFileDialog(picked_path, g_settings.hactool, win, exe_filter, 1, NULL, false);
+#else
+                        SDL_ShowOpenFileDialog(picked_path, g_settings.hactool, win, NULL, 0, NULL, false);
+#endif
+                    }
+                    check_left_of_value(hac_v);
+                    opt_section("Set up");
+                    std::string nx_d = "Extracts the game code and data from the package into LAS Recomp's data folder: "
+                                       "about the size of the game, twice that while it runs. Your .nsp isn't changed.";
+                    if (!job.empty()) nx_d += "\n\n" + job + (job_hint.empty() ? "" : ".\n" + job_hint);
+                    if (busy || nsp.empty() || !keys_ok || hp.empty()) opt_disable_next();
+                    if (opt_action("Extract game files", busy ? "Working..." : "", nx_d.c_str(), true)) {
+                        pthread_mutex_lock(&g_lock);
+                        g_busy = true;
+                        pthread_mutex_unlock(&g_lock);
+                        set_job("Starting...");
+                        pthread_t t;
+                        pthread_create(&t, NULL, nsp_thread, NULL);
+                        pthread_detach(t);
+                    }
+                    files_gb = -1;
+                } else if (!ready) {
                     opt_section("Your copy of the game");
                     if (busy) opt_disable_next();
                     if (opt_action("Game files folder", src_v.c_str(), src_d.c_str(), true))
@@ -1372,10 +1559,11 @@ extern "C" void launcher_run(const char *root) {
                     ImDrawList *fg = ImGui::GetForegroundDrawList();
                     ImVec2 o = ImGui::GetMainViewport()->Pos;
                     fg->AddRectFilled(o, ImVec2(o.x + ds.x, o.y + ds.y), IM_COL32(0, 0, 0, 170));
-                    float f = test_busy ? 0.42f : extract_progress();
+                    float f = test_busy ? 0.42f : g_nsp_frac >= 0 ? (float)g_nsp_frac : extract_progress();
                     // (while the game code is built: what's happening, on whose files - runtime/gamebuild.c)
                     bool recompiling = g_build_frac >= 0;
-                    const char *title = recompiling ? "Recompiling the game" : "Setting up the game files";
+                    const char *title = recompiling ? "Recompiling the game"
+                                      : g_nsp_frac >= 0 ? "Extracting the game files" : "Setting up the game files";
                     static const char *const notes[] = {"This only needs to be done once and may take a while."};
                     int nnotes = recompiling ? 1 : 0;
                     float tfs = g_font_menu->FontSize * 0.75f, sfs = g_font_small->FontSize * 0.85f;

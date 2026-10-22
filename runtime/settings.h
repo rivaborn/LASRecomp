@@ -57,6 +57,13 @@ typedef struct {
     int tunic;           // index into g_tunic_colours (0 = Default: the game's / the seed's own)
     int hearts;          // index into g_heart_colours (0 = Default red)
     char rando_seed[128];  // active randomizer seed (rando/<name>/), empty = vanilla
+    // games other than Link's Awakening: the player's .nsp and what extracts it (start screen, Game Files page)
+    char nsp_path[1024];   // the package
+    char keys_dir[1024];   // holds prod.keys; empty = %APPDATA%\eden\keys (Windows), ~/.switch
+    char hactool[1024];    // hactool executable; empty = looked for next to the app
+    // the controller used in game: SDL GUID + name (empty = the first connected one)
+    char pad_guid[64];
+    char pad_name[128];
 } Settings;
 
 enum { N_TUNIC_COLOURS = 13, N_HEART_COLOURS = 9 };
