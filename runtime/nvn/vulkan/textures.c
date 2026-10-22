@@ -250,6 +250,8 @@ void vk_image_init_layout(VkCommandBuffer cb, VkImage img, VkImageAspectFlags as
 typedef struct { VkImage img; VmaAllocation mem; VkImageView view; uint64_t seq; } Dead;
 static Dead *dead;
 static int ndead, cap_dead;
+int vk_textures_live(void);
+int vk_textures_dead(void) { return ndead; }
 static void views_forget(TexBackend *b);
 
 void vk_collect_dead(void) {
@@ -381,6 +383,7 @@ static void destroy_image(TexBackend *b) {
 // Live game textures: an in-place reboot (vk_textures_reset) destroys them all.
 static NvnTexture **g_live;
 static int g_nlive, g_cap_live;
+int vk_textures_live(void) { return g_nlive; }
 static void live_add(NvnTexture *t, TexBackend *b) {
     if (g_nlive == g_cap_live) { g_cap_live = g_cap_live ? g_cap_live * 2 : 1024; g_live = realloc(g_live, g_cap_live * sizeof *g_live); }
     g_live[g_nlive++] = t;

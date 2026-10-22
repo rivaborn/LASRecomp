@@ -469,8 +469,67 @@ static NvnTexture *texture_from_builder(uint64_t b) {
     return t;
 }
 
+// Texture interning. A texture is a descriptor of memory the game owns, so two identical descriptors are the same
+// texture on the hardware. Games re-initialize descriptors freely (BotW: ~37 a frame, never finalized), which cost
+// nothing there but gave each one its own host texture, Vulkan image and upload here (GPU memory full by frame
+// ~1,400). Initialize now returns the existing host texture for an identical builder and counts it; Finalize releases
+// the image when the count reaches zero (the struct stays: copies may still point to it, see below).
+// Key: builder bytes 0x8-0x47 (flags, target, size, levels, format, samples, swizzle, ds mode, stride, pool, offset)
+// and the packaged layout at 0x50.
+typedef struct {
+    uint8_t b[0x40];
+    uint64_t packaged;
+} TexKey;
+typedef struct {
+    TexKey k;
+    NvnTexture *t;
+} TexSlot;
+static pthread_mutex_t tex_lock = PTHREAD_MUTEX_INITIALIZER;
+static TexSlot *tex_tab;
+static size_t tex_cap, tex_n;
+
+static uint64_t tex_key_hash(const TexKey *k) {
+    const uint8_t *p = (const uint8_t *)k;
+    uint64_t h = 0xcbf29ce484222325ull;
+    for (size_t i = 0; i < sizeof *k; i++) h = (h ^ p[i]) * 0x100000001b3ull;
+    return h;
+}
+
+static TexSlot *tex_find(const TexKey *k) {  // the key's slot, or the empty slot where it goes (tex_lock held)
+    size_t i = tex_key_hash(k) & (tex_cap - 1);
+    while (tex_tab[i].t && memcmp(&tex_tab[i].k, k, sizeof *k)) i = (i + 1) & (tex_cap - 1);
+    return &tex_tab[i];
+}
+
+static NvnTexture *texture_intern(uint64_t b) {
+    TexKey k;
+    memset(&k, 0, sizeof k);
+    memcpy(k.b, (const void *)(uintptr_t)(b + 8), sizeof k.b);
+    k.packaged = G(uint64_t, b, 0x50);
+    pthread_mutex_lock(&tex_lock);
+    if (tex_n * 2 >= tex_cap) {  // grow (load factor 1/2)
+        TexSlot *old = tex_tab;
+        size_t old_cap = tex_cap;
+        tex_cap = tex_cap ? tex_cap * 2 : 4096;
+        tex_tab = calloc(tex_cap, sizeof *tex_tab);
+        for (size_t i = 0; i < old_cap; i++)
+            if (old[i].t) *tex_find(&old[i].k) = old[i];
+        free(old);
+    }
+    TexSlot *s = tex_find(&k);
+    if (!s->t) {
+        s->k = k;
+        s->t = texture_from_builder(b);
+        tex_n++;
+    }
+    NvnTexture *t = s->t;
+    t->refs++;
+    pthread_mutex_unlock(&tex_lock);
+    return t;
+}
+
 NVN(nvnTextureInitialize) {
-    NvnTexture *t = texture_from_builder(A(1));
+    NvnTexture *t = texture_intern(A(1));
     if (t->flags & 2)
         LOG("[nvn] video texture %p: %ux%u fmt %#x flags %#x target %u addr %llx stride %llu\n", t, t->width, t->height,
             t->format, t->flags, t->target, t->addr, t->stride);
@@ -483,7 +542,13 @@ NVN(nvnTextureInitialize) {
 // on the next use through a surviving copy (texture_retire: by the submitting thread).
 NVN(nvnTextureFinalize) {
     NvnTexture *t = HOST(NvnTexture, A(0));
-    if (t) texture_retire(t);
+    if (t) {
+        pthread_mutex_lock(&tex_lock);
+        bool last = --t->refs <= 0;
+        if (last) t->refs = 0;
+        pthread_mutex_unlock(&tex_lock);
+        if (last) texture_retire(t);
+    }
     SET_HOST(A(0), 0);
 }
 NVN(nvnTextureSetDebugLabel) {

@@ -41,6 +41,7 @@ typedef struct NvnTexture {
     NvnPool *pool;
     uint64_t pool_offset;
     void *backend;  // renderer-side texture
+    int32_t refs;   // Initialize calls not yet finalized (objects.c texture interning)
     uint64_t debug_id;
     char label[64];
 } NvnTexture;

@@ -717,6 +717,19 @@ const char *renderer_stats(void) {
              (unsigned long long)stat_dispatches, (unsigned long long)stat_flushes, (double)stat_wait_ns / 1e6,
              atomic_exchange(&stat_compiles, 0), (unsigned long long)stat_feedback_copies, (double)stat_upload_bytes / 1048576.0);
     stat_feedback_copies = stat_upload_bytes = 0;
+    {   // GPU memory: the game's live textures, images waiting for the GPU before release, VMA's device-local use
+        extern int vk_textures_live(void), vk_textures_dead(void);
+        VmaBudget bud[VK_MAX_MEMORY_HEAPS];
+        vmaGetHeapBudgets(g_vk.vma, bud);
+        const VkPhysicalDeviceMemoryProperties *mp;
+        vmaGetMemoryProperties(g_vk.vma, &mp);
+        uint64_t used = 0, budget = 0;
+        for (uint32_t h = 0; h < mp->memoryHeapCount; h++)
+            if (mp->memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) { used += bud[h].usage; budget += bud[h].budget; }
+        size_t n = strlen(stats_text);
+        snprintf(stats_text + n, sizeof stats_text - n, ", vram %.0f/%.0f MB, textures %d live %d dead",
+                 used / 1048576.0, budget / 1048576.0, vk_textures_live(), vk_textures_dead());
+    }
     {
         extern void vk_alias_stats(void);
         vk_alias_stats();
