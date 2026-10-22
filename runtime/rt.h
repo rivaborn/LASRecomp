@@ -86,6 +86,7 @@ int ui_run(void);  // window loop; returns the reboot kind requested (the window
 void guest_call(Cpu *c, uint64_t addr);   // call guest function at addr (saves/restores x30)
 uint64_t guest_sym(const char *name);     // cached loader_find_symbol, fatal if missing
 void *hle_alloc(uint64_t size);           // zeroed guest-visible memory (never freed)
+void rt_heap_check(const char *where);    // LARECOMP_HEAPCHECK: validate the CRT heap here (debug_alloc.c)
 extern const char *g_romfs_dir;
 extern uint64_t g_title_id;
 // Link's Awakening's own features (randomizer, QoL, overlays, editors) read its memory at fixed addresses: only for it.

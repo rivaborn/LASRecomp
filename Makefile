@@ -130,6 +130,24 @@ GAMELIB_ID := $(shell (cat $(GAMELIB_SRCS); echo '$(GENFLAGS)') | (shasum -a 256
 RT_OBJ   := $(patsubst runtime/%.c,$(B)/rt/%.o,$(RT_SRC))
 RTFLAGS  := -O2 -g -fno-strict-aliasing -Wall -Wno-unused-function -Iruntime -Iruntime/nvn $(DEPINC) $(OSFLAGS)
 CXXFLAGS := -O2 -g -std=c++17 -I$(IMGUI) -I$(IMGUI)/backends -Iruntime -Iruntime/nvn $(DEPINC)
+# GUARD_ALLOC=1 (Windows): the runtime's own malloc / calloc / realloc / free through runtime/debug_alloc.c, every
+# block against an inaccessible page: an overrun or a use after free faults where it happens. Slow, memory hungry:
+# for finding host heap corruption. Build into its own B with the game library next to it.
+ifeq ($(GUARD_ALLOC),1)
+RTFLAGS  += -DGUARD_ALLOC
+CXXFLAGS += -DGUARD_ALLOC
+LDFLAGS  += -Wl,--wrap=malloc -Wl,--wrap=calloc -Wl,--wrap=realloc -Wl,--wrap=free
+endif
+
+# SANITIZE=address: the runtime (not the game code library) with AddressSanitizer, for host memory errors
+# (heap corruption). Windows: MSYS2's UCRT64 clang has no ASan runtime; CLANG64's is used (same clang, same UCRT).
+# Build it into its own B and put the game library next to it: make GAME=x B=build-x-asan SANITIZE=address
+ifeq ($(SANITIZE),address)
+ASAN_LIBDIR ?= $(firstword $(wildcard /c/msys64/clang64/lib/clang/*/lib/windows))
+RTFLAGS  += -fsanitize=address -fno-omit-frame-pointer -O1
+CXXFLAGS += -fsanitize=address -fno-omit-frame-pointer
+LDFLAGS  += $(ASAN_LIBDIR)/libclang_rt.asan_dynamic-x86_64.dll.a $(ASAN_LIBDIR)/libclang_rt.asan_dynamic_runtime_thunk-x86_64.a
+endif
 
 all: $(EXE) $(if $(GEN_SRC),$(GAMELIB))
 

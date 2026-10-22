@@ -477,6 +477,7 @@ void backend_represent(void) {
 }
 
 void backend_present(NvnTexture *t) {
+    rt_heap_check("present");
     g_last_presented = t;
     TexBackend *b = vk_tex(t, true);
     b->presented = true;

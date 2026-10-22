@@ -40,6 +40,7 @@ static CmdRec *raw_rec(uint64_t at, uint32_t op, uint32_t size) {
 // later: lists are replayed by the renderer after they are submitted.
 #define CHUNK 0x10000ull
 #define SHADOW_SCALE 10  // command records vs. NVN's own encoding: ~9x (a BotW draw: 400 vs 44 bytes)
+#define SHADOW_SLACK 0x10000ull  // pool bytes past the end that command memory may reach (see AddCommandMemory)
 #define MAX_CHUNKS 2048  // (128 MB of the HLE heap)
 static struct { uint64_t addr, origin, released; bool in_use; } chunks[MAX_CHUNKS];
 extern uint64_t vk_frame_counter(void);
@@ -109,14 +110,29 @@ NVN(nvnCommandBufferAddCommandMemory) {
     }
     NvnPool *pool = HOST(NvnPool, A(1));
     const uint64_t off = A(2), size = A(3);
-    game_memory(cb, pool->storage + off, size);
+    game_memory(cb, pool_addr(pool, off), size);
     // Records go to the pool's shadow at the same relative place, scaled: the game's memory itself stays as it left
     // it. Games manage command memory with the sizes NVN reports (BotW starts the next list where the last one's
     // reported use ends), and our records are ~9x those.
     if (!pool->cmd_shadow) {
-        pool->cmd_shadow = plat_reserve(pool->size * SHADOW_SCALE);
+        pool->cmd_shadow = plat_reserve((pool->size + SHADOW_SLACK) * SHADOW_SCALE);
         if (!pool->cmd_shadow) FATAL("nvn: no address space for command records (pool %#llx bytes)\n",
                                       (unsigned long long)pool->size);
+    }
+    // BotW adds 0x200-byte chunks that end up to ~0x150 bytes past its 0x4000-byte command pools: the shadow has
+    // room for that (SHADOW_SLACK); further than that is refused.
+    if (off + size > pool->size + SHADOW_SLACK) {
+        LOG("[nvn] AddCommandMemory past its pool: pool %llx (size %llx flags %#x) offset %llx size %llx: ignored\n",
+            (unsigned long long)A(1), (unsigned long long)pool->size, pool->flags, (unsigned long long)off,
+            (unsigned long long)size);
+        return;
+    }
+    if (off + size > pool->size) {
+        static int warned;
+        if (warned++ < 2)
+            LOG("[nvn] AddCommandMemory past its pool: pool %llx (size %llx flags %#x) offset %llx size %llx\n",
+                (unsigned long long)A(1), (unsigned long long)pool->size, pool->flags, (unsigned long long)off,
+                (unsigned long long)size);
     }
     const uint64_t shadow = pool->cmd_shadow + off * SHADOW_SCALE;
     plat_commit(shadow, size * SHADOW_SCALE);

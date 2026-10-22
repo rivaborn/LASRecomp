@@ -492,6 +492,14 @@ static void upload_texture(NvnTexture *t, TexBackend *b) {
     if (!fi || !fi->bpb) return;
     VkFmt mf = fmt_of(t->format);
     uint64_t total = tegra_total_size(&t->layout);
+    if (t->addr < GUEST_LO || t->addr + total > GUEST_HI || total > GUEST_HI - GUEST_LO) {
+        static int warned;
+        if (warned++ < 8)
+            LOG("[vk] texture %p (id %llu '%s') storage %llx+%llx outside guest memory: %ux%u fmt %#x target %u\n",
+                (void *)t, (unsigned long long)t->debug_id, t->label, (unsigned long long)t->addr,
+                (unsigned long long)total, t->width, t->height, t->format, t->target);
+        return;
+    }
     b->checked_frame = frame;
     prof_tex_checks++;
     if (t->flags & 0x10) b->dynamic = true;

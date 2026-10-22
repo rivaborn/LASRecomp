@@ -20,7 +20,17 @@ typedef struct NvnPool {
     uint64_t storage, size;
     uint32_t flags;
     uint64_t cmd_shadow;  // host memory for command records made in this pool (cmdbuf.c), SHADOW_SCALE x its size
+    // A virtual pool (NVN_MEMORY_POOL_FLAGS_VIRTUAL) has no storage of its own: nvnMemoryPoolMapVirtual maps ranges
+    // of physical pools into it, and pool_addr resolves an offset through them. Textures made in it are kept so a
+    // later mapping can give them their address.
+    struct PoolMap { uint64_t virt, size, phys; } *maps;
+    int nmaps;
+    struct NvnTexture **texs;
+    int ntexs, cap_texs;
 } NvnPool;
+
+#define NVN_POOL_VIRTUAL 0x200u
+uint64_t pool_addr(const NvnPool *p, uint64_t off);  // guest address of a pool offset (0: unmapped)
 
 typedef struct NvnTexture {
     TexLayout layout;
