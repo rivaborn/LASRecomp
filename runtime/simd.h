@@ -208,6 +208,19 @@ SI int simd_fe_mode(uint64_t fpcr) {
     static const int m[4] = {FE_TONEAREST, FE_UPWARD, FE_DOWNWARD, FE_TOWARDZERO};
     return m[(fpcr >> 22) & 3];
 }
+// The slow paths' rounding mode: enter returns the mode to restore, or -1 when nothing was changed. FZ alone (rounding
+// to nearest, the host's mode, which every path restores) needs no change. Changing it is costly on Windows (MinGW
+// rewrites the x87 control word and MXCSR): NVIDIA's code runs with FZ set, and BotW's boot spent 30 s in it.
+SI int simd_fe_enter(uint64_t fpcr) {
+    const int m = simd_fe_mode(fpcr);
+    if (m == FE_TONEAREST) return -1;
+    const int old = fegetround();
+    fesetround(m);
+    return old;
+}
+SI void simd_fe_leave(int old) {
+    if (old >= 0) fesetround(old);
+}
 
 #define F s
 #define T float
@@ -263,11 +276,10 @@ SI double simd_s2d(Cpu *c, float x) {
 }
 SN float simd_d2s_slow(Cpu *c, double x) {
 #pragma STDC FENV_ACCESS ON
-    int old = fegetround();
-    fesetround(simd_fe_mode(c->fpcr));
+    int old = simd_fe_enter(c->fpcr);
     volatile double vx = x;
     volatile float r = (float)vx;
-    fesetround(old);
+    simd_fe_leave(old);
     return r;
 }
 SI float simd_d2s(Cpu *c, double x) {

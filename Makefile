@@ -151,7 +151,9 @@ endif
 
 all: $(EXE) $(if $(GEN_SRC),$(GAMELIB))
 
-$(B)/obj/%.o: $(GEN)/%.c runtime/cpu.h
+# (generated code inlines cpu.h, simd.h and simd_fp.h: a change to any of them rebuilds it)
+GEN_HDRS := runtime/cpu.h runtime/simd.h runtime/simd_fp.h
+$(B)/obj/%.o: $(GEN)/%.c $(GEN_HDRS)
 	@mkdir -p $(dir $@)
 	@$(CC) $(GENFLAGS) -c $< -o $@
 
@@ -165,7 +167,7 @@ GEN_BIG  := $(patsubst %.c,$(B)/obj/%.o,$(patsubst $(GEN)/%,%,$(shell find $(GEN
 ifeq ($(TIMEOUT),)
 $(GEN_BIG): GENFLAGS := $(filter-out -O1,$(GENFLAGS)) -O0
 else
-$(GEN_BIG): $(B)/obj/%.o: $(GEN)/%.c runtime/cpu.h
+$(GEN_BIG): $(B)/obj/%.o: $(GEN)/%.c $(GEN_HDRS)
 	@mkdir -p $(dir $@)
 	@"$(TIMEOUT)" $(BIG_O1_SECONDS) $(CC) $(GENFLAGS) -c $< -o $@ || \
 	 { echo "  $<: -O1 over $(BIG_O1_SECONDS) s, built at -O0"; \

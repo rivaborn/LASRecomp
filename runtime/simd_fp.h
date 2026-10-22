@@ -126,14 +126,14 @@ SN T FN(slow)(Cpu *c, int op, T a, T b, T d) {
     uint64_t fpcr = c->fpcr;
     if (fpcr & FPCR_FZ) a = FN(flush)(a), b = FN(flush)(b), d = FN(flush)(d);
     if (FMINMAX(op)) return FN(minmax)(c, op, a, b);
-    int old = fegetround();
-    fesetround(simd_fe_mode(fpcr));
+    int old = simd_fe_enter(fpcr);
     volatile T va = a, vb = b, vd = d;
     volatile T vr = op == FOP_RSQRTS ? FN(rsqrts)(va, vb) : FCALC(op, va, vb, vd, K);
     T r = vr;
     if (FBAD(op, r)) vr = FN(fix)(c, op, a, b, d), r = vr;
     if ((fpcr & FPCR_FZ) && (FN(fb)(r) & ~SGN) <= MINN && !FN(iszero)(FN(fb)(r))) {
         if ((FN(fb)(r) & ~SGN) == MINN) {
+            if (old < 0) old = FE_TONEAREST;  // (changed now: restored below)
             fesetround(FE_TOWARDZERO);
             volatile T vz = FCALC(op, va, vb, vd, K);
             if ((FN(fb)(vz) & ~SGN) < MINN) r = FN(fv)(FN(fb)(r) & SGN);
@@ -141,7 +141,7 @@ SN T FN(slow)(Cpu *c, int op, T a, T b, T d) {
             r = FN(fv)(FN(fb)(r) & SGN);
         }
     }
-    fesetround(old);
+    simd_fe_leave(old);
     return r;
 }
 
@@ -259,13 +259,12 @@ SI uint64_t FN(toint)(Cpu *c, T x, int rm, int fbits, int ib, int uns) {
 // ---- integer -> FP (SCVTF/UCVTF, fixed point), rounded in the FPCR mode
 SN T FN(fromint_slow)(Cpu *c, uint64_t v, int ib, int uns, int fbits) {
 #pragma STDC FENV_ACCESS ON
-    int old = fegetround();
-    fesetround(simd_fe_mode(c->fpcr));
+    int old = simd_fe_enter(c->fpcr);
     volatile uint64_t vv = v;
     volatile T r;
     if (uns) r = ib == 32 ? (T)(uint32_t)vv : (T)vv;
     else r = ib == 32 ? (T)(int32_t)vv : (T)(int64_t)vv;
-    fesetround(old);
+    simd_fe_leave(old);
     T x = r;
     if (fbits) x = x / (T)(1ull << (fbits - 1)) / K(2);
     return x;
