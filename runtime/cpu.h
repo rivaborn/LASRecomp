@@ -16,7 +16,8 @@ typedef struct __attribute__((aligned(16))) Cpu {
     void *thread;            // 312: runtime thread object
     uint64_t fpcr;           // 320: guest FPCR/FPSR (portable FP/SIMD lowering only; the asm path uses the host's)
     uint64_t fpsr;           // 328
-    uint8_t _pad[512 - 336];
+    volatile uint32_t preempt;  // 336: a higher-priority thread waits for this one's core (runtime/sched.c)
+    uint8_t _pad[512 - 340];
     __uint128_t v[32];       // 512
 } Cpu;
 
@@ -59,7 +60,12 @@ typedef uint8_t __attribute__((may_alias)) u8a;
 // Function-entry profiler (runtime/fnprof.c, LARECOMP_FNPROF): one predictable branch per call when off.
 extern volatile int g_fnprof;
 void fnprof_hit(uint64_t addr, uint64_t lr, uint64_t x0);
-#define FN_ENTER(a) do { if (__builtin_expect(g_fnprof, 0)) fnprof_hit(a, c->x[30], c->x[0]); } while (0)
+void rt_preempt(Cpu *c);  // runtime/sched.c: yield the core to a higher-priority thread
+#define FN_ENTER(a)                                                              \
+    do {                                                                         \
+        if (__builtin_expect(c->preempt, 0)) rt_preempt(c);                      \
+        if (__builtin_expect(g_fnprof, 0)) fnprof_hit(a, c->x[30], c->x[0]);     \
+    } while (0)
 
 #define LD8(a)  (*(const u8a *)(uintptr_t)(a))
 #define LD16(a) (*(const u16u *)(uintptr_t)(a))

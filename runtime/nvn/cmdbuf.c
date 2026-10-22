@@ -28,7 +28,51 @@ static CmdRec *raw_rec(uint64_t at, uint32_t op, uint32_t size) {
     return r;
 }
 
+// Overflow chunks (rec below): the runtime's own command memory, 64 KB each, recycled. A chunk retires when its
+// command buffer moves on to other memory and is reused 4 presented frames later (what was recorded in it has
+// been executed by then).
+#define CHUNK 0x10000ull
+#define MAX_CHUNKS 4096
+static struct { uint64_t addr, retired_frame; bool in_use; } chunks[MAX_CHUNKS];
+static int nchunks;
+static pthread_mutex_t chunk_lock = PTHREAD_MUTEX_INITIALIZER;
+extern uint64_t vk_frame_counter(void);
+
+static uint64_t chunk_get(void) {
+    pthread_mutex_lock(&chunk_lock);
+    uint64_t now = vk_frame_counter();
+    for (int i = 0; i < nchunks; i++)
+        if (!chunks[i].in_use && now - chunks[i].retired_frame >= 4) {
+            chunks[i].in_use = true;
+            pthread_mutex_unlock(&chunk_lock);
+            return chunks[i].addr;
+        }
+    uint64_t a = 0;
+    if (nchunks < MAX_CHUNKS) {
+        a = (uint64_t)(uintptr_t)hle_alloc(CHUNK);
+        chunks[nchunks].addr = a;
+        chunks[nchunks++].in_use = true;
+        if ((nchunks & (nchunks - 1)) == 0) LOG("[nvn] command memory overflow chunks: %d (%llu KB)\n", nchunks,
+                                               (unsigned long long)(nchunks * CHUNK >> 10));
+    }
+    pthread_mutex_unlock(&chunk_lock);
+    if (!a) FATAL("nvn: command memory overflow chunks exhausted\n");
+    return a;
+}
+
+static void chunk_retire(uint64_t mem) {
+    pthread_mutex_lock(&chunk_lock);
+    for (int i = 0; i < nchunks; i++)
+        if (chunks[i].addr == mem && chunks[i].in_use) {
+            chunks[i].in_use = false;
+            chunks[i].retired_frame = vk_frame_counter();
+            break;
+        }
+    pthread_mutex_unlock(&chunk_lock);
+}
+
 static void add_command_memory(NvnCmdBuf *cb, uint64_t mem, uint64_t size) {
+    if (cb->mem && cb->size == CHUNK) chunk_retire(cb->mem);  // (a pool chunk it leaves)
     if (cb->recording && cb->mem) {
         // chain the list being recorded into the new chunk
         CmdRec *j = raw_rec(cb->mem + cb->used, CMD_JUMP, sizeof(CmdRec));
@@ -41,7 +85,10 @@ static void add_command_memory(NvnCmdBuf *cb, uint64_t mem, uint64_t size) {
 NVN(nvnCommandBufferAddCommandMemory) {
     NvnCmdBuf *cb = cb_of(A(0));
     if (!A(1)) {  // no pool: no memory yet; the first record asks the game's memory callback (BotW does this)
-        if (!cb->recording) cb->mem = cb->size = cb->used = 0;
+        if (!cb->recording) {
+            if (cb->mem) chunk_retire(cb->mem);
+            cb->mem = cb->size = cb->used = 0;
+        }
         return;
     }
     add_command_memory(cb, HOST(NvnPool, A(1))->storage + A(2), A(3));
@@ -71,12 +118,12 @@ static CmdRec *rec(Cpu *c, NvnCmdBuf *cb, uint32_t op, uint32_t extra) {
             // A CmdRec is far bigger than real NVN's encoding of most commands, so memory the game sized for real
             // hardware (BotW: a 0x200-byte buffer on the stack) can run out where it never would on a Switch. The
             // runtime then chains a chunk of its own; the game never sees it.
-            static _Atomic uint64_t overflow_bytes;
-            uint64_t n = (size + JUMP_RESERVE) * 16 > 0x10000 ? (size + JUMP_RESERVE) * 16 : 0x10000;
-            uint64_t total = (overflow_bytes += n);
-            if ((total & ~0xFFFFFull) != ((total - n) & ~0xFFFFFull))
-                LOG("[nvn] command memory overflow chunks: %llu KB\n", (unsigned long long)(total >> 10));
-            add_command_memory(cb, (uint64_t)(uintptr_t)hle_alloc(n), n);
+            if (size + JUMP_RESERVE > CHUNK) {  // (bigger than a chunk: its own memory, kept)
+                uint64_t n = size + JUMP_RESERVE;
+                add_command_memory(cb, (uint64_t)(uintptr_t)hle_alloc(n), n);
+            } else {
+                add_command_memory(cb, chunk_get(), CHUNK);
+            }
             break;
         }
         uint64_t saved[8];

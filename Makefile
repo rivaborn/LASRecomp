@@ -137,9 +137,9 @@ $(B)/obj/%.o: $(GEN)/%.c runtime/cpu.h
 	@mkdir -p $(dir $@)
 	@$(CC) $(GENFLAGS) -c $< -o $@
 
-# Files over ~1.9 MB of C hold a few giant functions (state machines, all-label dispatch); clang's -O1 can spend hours
+# Files over ~0.9 MB of C hold a few giant functions (state machines, all-label dispatch); clang's -O1 can spend hours
 # on one of them (BotW: 3 files, still running after 50 minutes). They get -O0.
-GEN_BIG  := $(patsubst %.c,$(B)/obj/%.o,$(patsubst $(GEN)/%,%,$(shell find $(GEN) -name '*.c' -size +1900k 2>/dev/null)))
+GEN_BIG  := $(patsubst %.c,$(B)/obj/%.o,$(patsubst $(GEN)/%,%,$(shell find $(GEN) -name '*.c' -size +900k 2>/dev/null)))
 $(GEN_BIG): GENFLAGS := $(filter-out -O1,$(GENFLAGS)) -O0
 
 $(B)/obj/tools/gamelib_entry.o: tools/gamelib_entry.c $(GAMELIB_SRCS)

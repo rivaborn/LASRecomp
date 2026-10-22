@@ -6,6 +6,7 @@
 
 #include "hle.h"
 #include "kernel.h"
+#include "sched.h"
 
 // ------------------------------------------------------------------ results
 #undef R_OK
@@ -100,8 +101,14 @@ static bool kwait(int64_t timeout_ns, const struct timespec *ts) {
     pthread_cond_t *cv = t_cur ? &t_cur->cond : &g_nothread_cond;
     uint64_t t0 = plat_now_ns();
     bool r = true;
+    if (t_cur) sched_leave(t_cur);  // blocked: the core goes to the next ready thread
     if (timeout_ns < 0) pthread_cond_wait(cv, &g_klock);
     else r = pthread_cond_timedwait(cv, &g_klock, ts) == 0;
+    if (t_cur) {  // back on the core first (without g_klock: the runner may need it); callers re-check their state
+        pthread_mutex_unlock(&g_klock);
+        sched_enter(t_cur);
+        pthread_mutex_lock(&g_klock);
+    }
     g_blocked_ns += plat_now_ns() - t0;
     return r;
 }
@@ -188,8 +195,13 @@ static void *thread_main(void *arg) {
     KThread *t = arg;
     t_cur = t;
     crash_handler_install();
+    { extern void plat_watch_thread(void); plat_watch_thread(); }  // (LARECOMP_WATCH: debugging)
     rt_set_fpcr(0);
-    if (!setjmp(t->unwind)) guest_call(&t->cpu, t->entry);
+    if (!setjmp(t->unwind)) {
+        sched_enter(t);  // a new thread starts when its core is its (sched.c)
+        guest_call(&t->cpu, t->entry);
+    }
+    sched_leave(t);
     pthread_mutex_lock(&g_klock);
     t->finished = true;
     kernel_signal(&t->obj);
@@ -204,7 +216,7 @@ static KThread *thread_new(uint64_t entry, uint64_t arg, uint64_t stack_top, int
     t->obj.type = KOBJ_THREAD;
     t->entry = entry;
     t->prio = prio;
-    t->core = core < 0 ? 0 : core;
+    t->core = sched_core_for(core);
     t->id = next_thread_id++;
     t->cpu.x[0] = arg;
     t->cpu.sp = stack_top & ~15ull;
@@ -232,7 +244,7 @@ static void thread_start(KThread *t) {
 KThread *kernel_create_main_thread(uint64_t entry, uint64_t stack_size, int prio) {
     uint64_t stack = STACK_BASE + STACK_SIZE - ((stack_size + 0xFFFF) & ~0xFFFFull);
     region_add(stack, stack_size, 0xB, 3);
-    KThread *t = thread_new(entry, 0, stack + stack_size, prio, 0);
+    KThread *t = thread_new(entry, 0, stack + stack_size, prio, -2);  // (the default core)
     t->handle = kernel_new_handle(&t->obj);
     return t;
 }
@@ -517,6 +529,7 @@ static int prof_svc = -1;
 static void svc_entry(Cpu *c, uint32_t imm, uint64_t pc);
 void rt_svc(Cpu *c, uint32_t imm, uint64_t pc) {
     rt_unwind_point();
+    if (t_cur) sched_check(t_cur);  // safe point: a higher-priority thread waiting for this core goes first
     svc_entry(c, imm, pc);
     rt_unwind_point();
 }
@@ -578,11 +591,13 @@ static void svc_impl(Cpu *c, uint32_t imm, uint64_t pc) {
     }
     case 0x02: case 0x03: x[0] = R_OK; break;  // SetMemoryPermission / SetMemoryAttribute
     case 0x04:  // MapMemory(dst, src, size): src is inaccessible while mapped, so copying is equivalent
+        if (ENV("LARECOMP_TRACE_MAP")) LOG("[map] MapMemory dst %llx src %llx size %llx\n", x[0], x[1], x[2]);
         memcpy((void *)x[0], (void *)x[1], x[2]);
         region_add(x[0], x[2], 0xB, 3);
         x[0] = R_OK;
         break;
     case 0x05:  // UnmapMemory(dst, src, size): copy back
+        if (ENV("LARECOMP_TRACE_MAP")) LOG("[map] UnmapMemory dst %llx src %llx size %llx\n", x[0], x[1], x[2]);
         memcpy((void *)x[1], (void *)x[0], x[2]);
         region_remove(x[0]);
         x[0] = R_OK;
@@ -596,7 +611,8 @@ static void svc_impl(Cpu *c, uint32_t imm, uint64_t pc) {
     case 0x08: {  // CreateThread(_, entry, arg, stack_top, prio, core)
         KThread *t = thread_new(x[1], x[2], x[3], (int)x[4], (int)(int32_t)x[5]);
         t->handle = kernel_new_handle(&t->obj);
-        LOG("[kernel] CreateThread entry=%llx stack=%llx prio=%d -> %x\n", x[1], x[3], (int)x[4], t->handle);
+        LOG("[kernel] CreateThread entry=%llx stack=%llx prio=%d core %d -> %x\n", x[1], x[3], (int)x[4], t->core,
+            t->handle);
         x[0] = R_OK;
         x[1] = t->handle;
         break;
@@ -611,13 +627,15 @@ static void svc_impl(Cpu *c, uint32_t imm, uint64_t pc) {
     case 0x0A: longjmp(t_cur->unwind, 1);  // ExitThread: back to thread_main, which signals the thread object
     case 0x0B: {  // SleepThread (in slices of at most 50 ms: a reboot doesn't wait out a long sleep)
         int64_t ns = (int64_t)x[0];
-        if (ns <= 0) { sched_yield(); break; }
+        if (ns <= 0) { ksched_yield(t_cur); break; }  // (sched.c: equal or higher priority on this core first)
+        sched_leave(t_cur);
         for (uint64_t end = plat_now_ns() + (uint64_t)ns, now; !g_rt_unwind && (now = plat_now_ns()) < end;) {
             uint64_t d = end - now < 50000000 ? end - now : 50000000;
             struct timespec ts = {(time_t)(d / 1000000000), (long)(d % 1000000000)};
             nanosleep(&ts, NULL);
             g_blocked_ns += plat_now_ns() - now;
         }
+        sched_enter(t_cur);
         break;
     }
     case 0x0C: {  // GetThreadPriority(_, handle)
@@ -630,6 +648,7 @@ static void svc_impl(Cpu *c, uint32_t imm, uint64_t pc) {
         KObject *o = handle_get((uint32_t)x[0]);
         if (o) ((KThread *)o)->prio = (int)x[1];
         x[0] = o ? R_OK : R_INVALID_HANDLE;
+        if (o && (KThread *)o == t_cur) ksched_yield(t_cur);  // (lowered: others may go first)
         break;
     }
     case 0x0E: {  // GetThreadCoreMask(_, _, handle)
@@ -639,7 +658,21 @@ static void svc_impl(Cpu *c, uint32_t imm, uint64_t pc) {
         x[2] = 0xF;
         break;
     }
-    case 0x0F: x[0] = R_OK; break;  // SetThreadCoreMask
+    case 0x0F: {  // SetThreadCoreMask(handle, ideal core, affinity mask): the ideal core places the thread
+        KObject *o = handle_get((uint32_t)x[0]);
+        if (!o || o->type != KOBJ_THREAD) { x[0] = R_INVALID_HANDLE; break; }
+        int ideal = (int)(int32_t)x[1];
+        uint64_t mask = x[2];
+        KThread *t = (KThread *)o;
+        if (ideal == -1 && mask) ideal = __builtin_ctzll(mask);  // don't care: the first core of the mask
+        if (ideal != -3) {  // (-3: no update; -2: the process's default core)
+            int core = sched_core_for(ideal);
+            if (t == t_cur) sched_moved(t, core);
+            else t->core = core;  // (another thread: takes effect when it next waits for a core)
+        }
+        x[0] = R_OK;
+        break;
+    }
     case 0x10: x[0] = t_cur->core; break;  // GetCurrentProcessorNumber
     case 0x11: case 0x12: case 0x17: {  // SignalEvent / ClearEvent / ResetSignal
         pthread_mutex_lock(&g_klock);
@@ -713,11 +746,17 @@ static void svc_impl(Cpu *c, uint32_t imm, uint64_t pc) {
         x[1] = h;
         break;
     }
-    case 0x21: x[0] = ipc_handle_request(c, (uint32_t)x[0]); break;  // SendSyncRequest
+    case 0x21:  // SendSyncRequest (the client blocks until the server replies: the core is free meanwhile)
+        sched_pause(t_cur);
+        x[0] = ipc_handle_request(c, (uint32_t)x[0]);
+        sched_resume(t_cur);
+        break;
     case 0x22: {  // SendSyncRequestWithUserBuffer(buf, size, handle)
         uint64_t saved = c->tpidrro;
         c->tpidrro = x[0];
+        sched_pause(t_cur);
         x[0] = ipc_handle_request(c, (uint32_t)x[2]);
+        sched_resume(t_cur);
         c->tpidrro = saved;
         break;
     }

@@ -28,8 +28,39 @@ static bool lazy_commit(uint64_t a) {
 
 static bool g_report_crashes;
 
+// Debugging: LARECOMP_WATCH=<hex address> - a hardware write watchpoint (debug register 0, 8 bytes) on every guest
+// thread; each write is logged with the host instruction (as f_<guest function>+offset) and the value written.
+static uint64_t g_watch = ~0ull;
+const char *rt_host_fn_name(uint64_t pc, uint64_t *offset);
+
+void plat_watch_thread(void) {
+    if (g_watch == ~0ull) {
+        const char *e = getenv("LARECOMP_WATCH");
+        g_watch = e ? strtoull(e, NULL, 16) & ~7ull : 0;
+    }
+    if (!g_watch) return;
+    CONTEXT ctx = {0};
+    ctx.ContextFlags = CONTEXT_DEBUG_REGISTERS;
+    ctx.Dr0 = g_watch;
+    ctx.Dr7 = 1 | (1ull << 16) | (3ull << 18);  // L0, write, 8 bytes
+    if (!SetThreadContext(GetCurrentThread(), &ctx))
+        fprintf(stderr, "[watch] SetThreadContext failed (%lu)\n", GetLastError());
+}
+
 static LONG CALLBACK vectored_handler(EXCEPTION_POINTERS *ep) {
     EXCEPTION_RECORD *er = ep->ExceptionRecord;
+    if (er->ExceptionCode == EXCEPTION_SINGLE_STEP && g_watch && g_watch != ~0ull && (ep->ContextRecord->Dr6 & 1)) {
+        static volatile LONG n;
+        if (InterlockedIncrement(&n) <= 400) {
+            uint64_t pc = ep->ContextRecord->Rip, off = 0;
+            const char *fn = rt_host_fn_name(pc, &off);
+            fprintf(stderr, "[watch] %llx <- %llx by %s+%llx (host %llx) thread %lu\n", (unsigned long long)g_watch,
+                    (unsigned long long)*(volatile uint64_t *)(uintptr_t)g_watch, fn ? fn : "?",
+                    (unsigned long long)off, (unsigned long long)pc, GetCurrentThreadId());
+        }
+        ep->ContextRecord->Dr6 = 0;
+        return EXCEPTION_CONTINUE_EXECUTION;
+    }
     if (er->ExceptionCode != EXCEPTION_ACCESS_VIOLATION || er->NumberParameters < 2) return EXCEPTION_CONTINUE_SEARCH;
     uint64_t fa = er->ExceptionInformation[1];
     if (lazy_commit(fa)) return EXCEPTION_CONTINUE_EXECUTION;

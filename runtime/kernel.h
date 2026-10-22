@@ -37,6 +37,11 @@ struct KThread {
     jmp_buf unwind;
     bool started, finished;
     KThread *anext;        // every thread of this boot (g_klock)
+    // scheduling (sched.c): on its core, or waiting for it in the core's ready list
+    bool on_core;
+    int held_core;         // the core it holds (core may change meanwhile: SetThreadCoreMask)
+    uint64_t sched_seq;
+    KThread *rnext;
 };
 
 typedef struct KSharedMem {

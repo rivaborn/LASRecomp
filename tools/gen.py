@@ -369,6 +369,8 @@ class Module:
 
         def jump(t):
             if entry <= t < end:
+                if t <= a:  # a loop's back edge: a preemption point (runtime/sched.c), as a timer interrupt would be
+                    return f'{{ if (__builtin_expect(c->preempt, 0)) rt_preempt(c); goto L_{t:x}; }}'
                 return f'goto L_{t:x};'
             if not self.in_text(t):
                 return f'c->pc = {hx(t)}; __attribute__((musttail)) return rt_dispatch(c);'

@@ -7,6 +7,8 @@
 
 #include "gamelib.h"
 #include "hle.h"
+#include "kernel.h"
+#include "sched.h"
 
 typedef struct { const uint64_t *addrs; const GuestFn *fns; uint64_t count, lo, hi; } FnTable;
 static FnTable tables[GAMELIB_MAX_MODULES];
@@ -136,13 +138,27 @@ GuestFn dispatch_lookup(uint64_t addr) {
 #define DCACHE 4096
 static __thread struct { uint64_t addr; GuestFn fn; } dcache[DCACHE];
 
+// An HLE function runs with its thread's core released: host code may wait (GPU, vsync, audio), which on a
+// Switch would leave the core to other threads.
+static __thread HostFn t_hle_fn;
+static void hle_call(Cpu *c) {
+    HostFn f = t_hle_fn;
+    KThread *t = kernel_current_thread();
+    if (t) sched_pause(t);
+    f(c);
+    if (t) sched_resume(t);
+}
+
 static GuestFn dispatch_slow(Cpu *c) {
     uint64_t pc = c->pc;
     if (pc >= HLE_BASE && pc < HLE_BASE + HLE_SIZE) {
         rt_unwind_point();  // (HLE calls aren't cached below, so every one passes here: a reboot's safe point)
         int i = (int)((pc - HLE_BASE) / 16);
         if (i < hle_count) {
-            if (hle_slots[i].fn) return hle_slots[i].fn;
+            if (hle_slots[i].fn) {
+                t_hle_fn = hle_slots[i].fn;
+                return hle_call;  // (the core is free while host code runs: sched.c)
+            }
             unimpl_pc = pc;
             return hle_unimplemented;
         }
@@ -186,10 +202,11 @@ const char *rt_host_fn_name(uint64_t pc, uint64_t *offset) {
     static uint64_t n;
     static __thread char name[32];
     if (!byhost) {
-        uint64_t total = tables[0].count + tables[1].count, k = 0;
+        uint64_t total = 0, k = 0;
+        for (int t = 0; t < ntables; t++) total += tables[t].count;
         uint64_t (*v)[2] = malloc(total * sizeof *v);
         if (!v) return NULL;
-        for (int t = 0; t < 2; t++)
+        for (int t = 0; t < ntables; t++)
             for (uint64_t i = 0; i < tables[t].count; i++) {
                 v[k][0] = (uint64_t)(uintptr_t)tables[t].fns[i];
                 v[k++][1] = tables[t].addrs[i];
@@ -221,7 +238,7 @@ void rt_fatal_trace(void) {
     plat_print_backtrace();
     Cpu *c = kernel_current_cpu();
     if (c) {
-        fprintf(stderr, "guest: sp=%llx lr=%llx\n", c->sp, c->x[30]);
+        fprintf(stderr, "guest: sp=%llx lr=%llx pc=%llx (last indirect call target)\n", c->sp, c->x[30], c->pc);
         for (int i = 0; i < 31; i += 4)
             fprintf(stderr, "  x%-2d %016llx  x%-2d %016llx  x%-2d %016llx  x%-2d %016llx\n", i, c->x[i], i + 1,
                     c->x[i + 1], i + 2, c->x[i + 2], i + 3, c->x[i + 3]);

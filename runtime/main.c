@@ -9,6 +9,7 @@
 #include "settings.h"
 #include "hle.h"
 #include "kernel.h"
+#include "sched.h"
 #include "rando.h"
 
 const char *g_romfs_dir;
@@ -141,14 +142,18 @@ static void boot(const char *root) {
     { extern void settings_load(void); settings_load(); }
     kernel_init();
     dispatch_init();
+    { extern void heapfail_init(void); heapfail_init(); }  // (LARECOMP_HEAP_FAIL: debugging)
+    { extern void expheap_check_init(void); expheap_check_init(); }  // (LARECOMP_EXPHEAP_CHECK: debugging)
 
     uint32_t stack_size = 0x100000;
     int prio = 44;
+    sched_init(0);  // (main.npdm, if present, gives the default core)
     FILE *f = fopen(npdm_path, "rb");
     if (f) {
         uint8_t meta[0x80];
         if (fread(meta, 1, sizeof meta, f) == sizeof meta && !memcmp(meta, "META", 4)) {
             prio = meta[0xE];
+            sched_init(meta[0xF]);  // the program's default core
             stack_size = *(uint32_t *)(meta + 0x1C);
             uint8_t aci[0x18];  // ACI0 (offset at 0x70): the program id at +0x10
             if (!fseek(f, *(uint32_t *)(meta + 0x70), SEEK_SET) && fread(aci, 1, sizeof aci, f) == sizeof aci &&
