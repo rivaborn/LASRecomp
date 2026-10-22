@@ -1546,9 +1546,29 @@ typedef struct { NvnTexture *key; TexBackend copy; } Snap;
 static Snap snaps[16];
 static int nsnaps;
 
-static NvnTexture *shader_texture_object(int stage, ShaderTexture *st_) {
+// The texture handle a shader texture uses: a bound texture (handle_offset in the bound-texture cbuf), or a bindless
+// handle the shader loads from a constant buffer (translate.c bindless_slot: c[1] compiler constants after the code,
+// c[3 + k] uniform buffer k), read from guest memory at draw time. 0 when unavailable.
+static uint64_t shader_texture_handle(int stage, const ShaderTexture *st_) {
+    if (st_->bindless) {
+        uint32_t k = st_->bindless_cbuf, off = st_->bindless_offset;
+        uint64_t addr = 0, size = 0;
+        if (k == 1 && st.program) {
+            NvnShaderStage *ss = &st.program->stages[stage];
+            if (ss->code_addr) { addr = ss->code_addr + ss->const_offset; size = ss->const_size; }
+        } else if (k >= 3 && k - 3 < 18) {
+            addr = st.ubuf[stage][k - 3].addr;
+            size = st.ubuf[stage][k - 3].size;
+        }
+        if (!addr || (uint64_t)off + 4 > size) return 0;
+        return *(const uint32_t *)(uintptr_t)(addr + off);  // texture id (bits 0-19) | sampler id (20-31)
+    }
     int slot = ((int)st_->handle_offset - 0x20) / 8;
-    uint64_t h = (slot >= 0 && slot < 32) ? st.tex[stage][slot] : 0;
+    return (slot >= 0 && slot < 32) ? st.tex[stage][slot] : 0;
+}
+
+static NvnTexture *shader_texture_object(int stage, ShaderTexture *st_) {
+    uint64_t h = shader_texture_handle(stage, st_);
     uint32_t tic = h & 0xFFFFF;
     if (!h || !st.tpool || tic >= (uint32_t)st.tpool->count) return NULL;
     return ((NvnTexEntry *)st.tpool->entries)[tic].tex;
@@ -2302,8 +2322,7 @@ void vk_exec_reset(void) {
 
 static void texture_info(int stage, ShaderInfo *si, int i, VkDescriptorImageInfo *out, float sc[2], uint32_t wh[2]) {
     ShaderTexture *st_ = &si->tex[i];
-    int slot = ((int)st_->handle_offset - 0x20) / 8;  // 64-bit handles from offset 0x20
-    uint64_t h = (slot >= 0 && slot < 32) ? st.tex[stage][slot] : 0;
+    uint64_t h = shader_texture_handle(stage, st_);  // 64-bit handles from offset 0x20 (or a bindless cbuf word)
     VkImageView view = VK_NULL_HANDLE;
     VkSampler smp = VK_NULL_HANDLE;
     uint32_t tic = h & 0xFFFFF, tsc = (uint32_t)(h >> 20) & 0xFFF;

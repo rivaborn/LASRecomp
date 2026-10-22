@@ -204,7 +204,144 @@ static void dump(const char *dir, const char *tag, long n, const char *src, cons
     fclose(f);
 }
 
+#ifdef WITH_GLSL
+// Directed cases: instruction words from Breath of the Wild's shaders (TLD4, TLD4S, TMML.B, STS) and the other
+// forms of the same decoders, translated to GLSL, compiled and validated; `expect` is whether the translation
+// should succeed. usage: test_translate cases [-v]
+#define MOVC(d, idx, off) (0x4c98000000000000ull | (uint64_t)(idx) << 34 | (uint64_t)((off) / 4) << 20 | 0xfull << 39 | 7ull << 16 | (d))
+#define LDC32(d, idx, off) (0xef94000000000000ull | (uint64_t)(idx) << 36 | (uint64_t)(off) << 20 | 0xffull << 8 | 7ull << 16 | (d))
+#define LDS32(d, a, off) (0xef4c000000000000ull | (uint64_t)(off) << 20 | (uint64_t)(a) << 8 | 7ull << 16 | (d))
+#define ATOMS(op, sz, d, a, b, woff) (0xec00000000000000ull | (uint64_t)(op) << 52 | (uint64_t)(woff) << 30 | (uint64_t)(sz) << 28 | \
+                                      (uint64_t)(b) << 20 | (uint64_t)(a) << 8 | 7ull << 16 | (d))
+#define S2R_TIDX(d) (0xf0c8000000000000ull | 0x21ull << 20 | 0xffull << 8 | 7ull << 16 | (d))
+#define SHL_IMM(d, a, n) (0x3848000000000000ull | (uint64_t)(n) << 20 | (uint64_t)(a) << 8 | 7ull << 16 | (d))
+#define BAR_SYNC 0xf0a8000000000000ull | 0x8000000000ull | 7ull << 16
+#define SET(w, lo, n, v) (((w) & ~(((1ull << (n)) - 1) << (lo))) | ((uint64_t)(v) << (lo)))
+#define TLD4_W 0xc83801e6aff70c00ull
+#define IADD_RR(d, a, b) (0x5c10000000000000ull | (uint64_t)(b) << 20 | (uint64_t)(a) << 8 | 7ull << 16 | (d))
+typedef struct { const char *name; int stage; bool expect; uint64_t insn[9]; } Case;
+static const Case cases[] = {
+    {"TLD4 2D, mask rba", STAGE_FRAGMENT, true, {0xc83801e6aff70c00ull}},
+    {"TLD4 2D array", STAGE_FRAGMENT, true, {0xc83a0087bff70400ull}},
+    {"TLD4 2D, dest r28", STAGE_FRAGMENT, true, {0xc8380146aff70a1cull}},
+    {"TLD4 2D, component G, AOFFI", STAGE_FRAGMENT, true, {SET(SET(SET(TLD4_W, 56, 2, 1), 54, 2, 1), 20, 8, 4)}},
+    {"TLD4 2D, DC + AOFFI (shadow)", STAGE_FRAGMENT, true, {SET(SET(SET(TLD4_W, 54, 2, 1), 50, 1, 1), 20, 8, 4)}},
+    {"TLD4 cube", STAGE_FRAGMENT, true, {SET(TLD4_W, 28, 3, 6)}},
+    {"TLD4 compute (base level)", STAGE_COMPUTE, true, {TLD4_W}},
+    {"TLD4.B 2D array, handle c[2][0x40], AOFFI", STAGE_FRAGMENT, true, {MOVC(4, 2, 0x40), SET(SET(SET(0xdec0000000000000ull | 0xfull << 31 | 7ull << 16, 28, 3, 3), 36, 2, 1), 20, 8, 4) | 8ull << 8}},
+    {"TLD4 PTP (unsupported)", STAGE_FRAGMENT, false, {SET(SET(TLD4_W, 54, 2, 2), 20, 8, 4)}},
+    {"TLD4 3D (no gather)", STAGE_FRAGMENT, false, {SET(TLD4_W, 28, 3, 4)}},
+    {"TLD4S F32", STAGE_FRAGMENT, true, {0xdf0000c020470500ull}},
+    {"TLD4S F32 b", STAGE_FRAGMENT, true, {0xdf00024000870d02ull}},
+    {"TLD4S F32 c", STAGE_FRAGMENT, true, {0xdf00024020670b00ull}},
+    {"TLD4S F16, component A, AOFFI + DC", STAGE_FRAGMENT, true, {SET(SET(0xdf0000c020470500ull | 1ull << 55 | 3ull << 52 | 1ull << 51 | 1ull << 50, 8, 8, 4), 20, 8, 6)}},
+    {"TLD4S DC", STAGE_FRAGMENT, true, {0xdf0000c020470500ull | 1ull << 50}},
+    {"TMML.B, handle MOV c[2][0x30] (bound)", STAGE_FRAGMENT, true, {MOVC(2, 2, 0x30), 0xdf60000120270402ull}},
+    {"TMML.B, handle LDC c[2][0x38] (bound)", STAGE_FRAGMENT, true, {LDC32(3, 2, 0x38), 0xdf60000120370403ull}},
+    {"TMML.B, handle LDC c[3][0x40] (uniform buffer)", STAGE_FRAGMENT, true, {LDC32(7, 3, 0x40), 0xdf60000120770407ull}},
+    {"TMML.B, handle c[1] (compiler consts)", STAGE_FRAGMENT, true, {MOVC(11, 1, 0x8), 0xdf60000120b7080bull}},
+    {"TMML.B, handle across a later write", STAGE_FRAGMENT, true, {MOVC(2, 2, 0x30), MOVC(3, 2, 0x38), 0xdf60000120270402ull}},
+    {"TMML.B, handle computed (unsupported)", STAGE_FRAGMENT, false, {IADD_RR(2, 4, 5), 0xdf60000120270402ull}},
+    {"TMML.B, handle from c[0] (unsupported)", STAGE_FRAGMENT, false, {MOVC(2, 0, 0x30), 0xdf60000120270402ull}},
+    {"TMML.B, handle never set (unsupported)", STAGE_FRAGMENT, false, {0xdf60000120270402ull}},
+    {"TMML 2D, x and y", STAGE_FRAGMENT, true, {(0xdf58000000000000ull | 3ull << 31 | 2ull << 28 | 4ull << 8 | 5ull << 36 | 7ull << 16 | 2)}},
+    {"TMML cube array", STAGE_FRAGMENT, true, {(0xdf58000000000000ull | 2ull << 31 | 7ull << 28 | 4ull << 8 | 6ull << 36 | 7ull << 16 | 2)}},
+    {"TMML BA (unsupported)", STAGE_FRAGMENT, false, {(0xdf58000000000000ull | 4ull << 31 | 2ull << 28 | 4ull << 8 | 5ull << 36 | 7ull << 16 | 2)}},
+    {"TMML.B then TLD4 on the same texture", STAGE_FRAGMENT, true, {MOVC(2, 2, 0x78), 0xdf60000120270402ull, 0xc83801e6aff70c00ull}},
+    {"TEX.B, handle c[3][0x10]", STAGE_FRAGMENT, true, {LDC32(6, 3, 0x10), 0xdeb8000000670400ull | 2ull << 28 | 0xfull << 31 | 7ull << 16}},
+    {"STS (BotW) + BAR + LDS", STAGE_COMPUTE, true, {S2R_TIDX(1), SHL_IMM(1, 1, 2), 0xef5c000000870102ull, 0xef5c000000070108ull, BAR_SYNC, LDS32(4, 1, 8), LDS32(5, 0xff, 0x40)}},
+    {"STS.U8 / LDS.S16 / STS.128", STAGE_COMPUTE, true, {0xef58000000070102ull, (0xef49000000070104ull & ~(7ull << 48)) | 3ull << 48, (0xef58000000870108ull & ~(7ull << 48)) | 6ull << 48}},
+    {"ATOMS add / min.s32 / inc / exch", STAGE_COMPUTE, true, {ATOMS(0, 0, 2, 1, 3, 4), ATOMS(1, 1, 4, 0xff, 3, 8), ATOMS(3, 0, 5, 1, 3, 1), ATOMS(8, 0, 6, 1, 3, 0)}},
+    {"ATOMS 64-bit (unsupported)", STAGE_COMPUTE, false, {ATOMS(8, 2, 6, 1, 3, 0)}},
+    {"STS in a fragment shader (unsupported)", STAGE_FRAGMENT, false, {0xef5c000000870102ull}},
+};
+
+static size_t case_program(uint8_t *buf, size_t cap, const Case *k) {
+    memset(buf, 0, cap);
+    size_t hdr = k->stage == STAGE_COMPUTE ? 0 : 0x80;
+    if (k->stage == STAGE_FRAGMENT) { uint32_t omap = 0xF; memcpy(buf + 0x30 + 0x48, &omap, 4); }
+    uint64_t *code = (uint64_t *)(buf + hdr);
+    int i = 0, n = 0;
+    while (n < 9 && k->insn[n]) n++;
+    for (int j = 0; j < n; j++) {
+        if (i % 4 == 0) code[i++] = 0x001f8000fc0007e0ull;  // scheduling word
+        code[i++] = k->insn[j];
+    }
+    while (i % 4 != 0 || i == 0) { if (i % 4 == 0) code[i++] = 0x001f8000fc0007e0ull; else code[i++] = 0x50b0000000070f00ull; }  // NOP
+    code[i++] = 0x001f8000fc0007e0ull;
+    code[i++] = 0xe30000000007000full;  // EXIT
+    code[i++] = 0xe2400fffff87000full;  // BRA self
+    code[i++] = 0xe2400fffff87000full;
+    return hdr + (size_t)i * 8 + 64;
+}
+
+static int run_cases(bool verbose) {
+    shaderc_compiler_t comp = shaderc_compiler_initialize();
+    shaderc_compile_options_t opt = shaderc_compile_options_initialize();
+    shaderc_compile_options_set_target_env(opt, shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_3);
+    spv_context spv = spvContextCreate(SPV_ENV_VULKAN_1_3);
+    static uint8_t prog[0x1000];
+    int bad = 0;
+    for (size_t ci = 0; ci < sizeof cases / sizeof cases[0]; ci++) {
+        const Case *k = &cases[ci];
+        size_t len = case_program(prog, sizeof prog, k);
+        ShaderKey key = {0};
+        key.glsl = 1;
+        if (k->stage == STAGE_FRAGMENT) key.vs_out_mask = ~0u;
+        ShaderInfo *g = maxwell_translate(prog, len, k->stage, &key);
+        const char *status;
+        char err[512] = "";
+        if (!g->msl) {
+            status = k->expect ? "FAIL (translation)" : "ok (fails as expected)";
+            snprintf(err, sizeof err, "%s", g->error);
+        } else {
+            shaderc_shader_kind kind = k->stage == STAGE_FRAGMENT ? shaderc_fragment_shader : shaderc_compute_shader;
+            shaderc_compilation_result_t res = shaderc_compile_into_spv(comp, g->msl, strlen(g->msl), kind, "case", "main", opt);
+            if (shaderc_result_get_compilation_status(res) != shaderc_compilation_status_success) {
+                status = "FAIL (glsl compile)";
+                snprintf(err, sizeof err, "%s", shaderc_result_get_error_message(res));
+            } else {
+                spv_diagnostic diag = NULL;
+                spv_const_binary_t bin = {(const uint32_t *)shaderc_result_get_bytes(res), shaderc_result_get_length(res) / 4};
+                spv_validator_options vo = spvValidatorOptionsCreate();
+                bool valid = spvValidateWithOptions(spv, vo, &bin, &diag) == SPV_SUCCESS;
+                spvValidatorOptionsDestroy(vo);
+                if (!valid) { status = "FAIL (spir-v validation)"; snprintf(err, sizeof err, "%s", diag ? diag->error : "?"); }
+                else status = k->expect ? "ok" : "FAIL (translated, expected a failure)";
+                spvDiagnosticDestroy(diag);
+            }
+            shaderc_result_release(res);
+        }
+        if (strncmp(status, "ok", 2)) bad++;
+        printf("%-48s %s%s%s\n", k->name, status, err[0] ? ": " : "", err);
+        for (int t = 0; g->msl && t < g->ntex; t++)
+            if (verbose || g->tex[t].bindless)
+                printf("    tex %d: type %d shadow %d array %d %s c[%u][%#x] handle_offset %#x\n", t, g->tex[t].type, g->tex[t].shadow,
+                       g->tex[t].is_array, g->tex[t].bindless ? "bindless" : "bound", g->tex[t].bindless_cbuf, g->tex[t].bindless_offset,
+                       g->tex[t].handle_offset);
+        if (g->msl && verbose) {  // the body lines of interest
+            for (const char *p = g->msl; *p;) {
+                const char *e = strchr(p, '\n');
+                if (!e) e = p + strlen(p);
+                static const char *const keys[] = {"textureGather", "lq", "smem", "barrier", "uniform sampler", "texture(", "atomic"};
+                bool show = false;
+                for (int q = 0; q < 7; q++) { const char *h = strstr(p, keys[q]); show |= h && h < e; }
+                if (show)
+                    printf("      %.*s\n", (int)(e - p), p);
+                p = *e ? e + 1 : e;
+            }
+        }
+        maxwell_free(g);
+    }
+    printf("%d case(s) wrong\n", bad);
+    return bad ? 1 : 0;
+}
+#endif
+
 int main(int argc, char **argv) {
+#ifdef WITH_GLSL
+    if (argc >= 2 && !strcmp(argv[1], "cases")) return run_cases(argc >= 3 && !strcmp(argv[2], "-v"));
+#endif
     if (argc < 4) { fprintf(stderr, "usage: %s <translate.c> <count> <seed> [msl|glsl|both] [dump_dir]\n", argv[0]); return 2; }
     load_patterns(argv[1]);
     long count = atol(argv[2]);
