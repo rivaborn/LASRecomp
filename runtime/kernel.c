@@ -77,7 +77,7 @@ void kernel_signal(KObject *o) {
 
 uint64_t rt_ticks(void) {
     // 19.2 MHz system tick
-    uint64_t ns = plat_now_ns();
+    uint64_t ns = turbo_guest_ns();
     static double scale = -1;
     if (scale < 0) scale = getenv("LARECOMP_TICK_SCALE") ? atof(getenv("LARECOMP_TICK_SCALE")) : 1.0;
     if (scale != 1.0) ns = (uint64_t)(ns * scale);
@@ -85,6 +85,7 @@ uint64_t rt_ticks(void) {
 }
 
 static void deadline(struct timespec *ts, int64_t timeout_ns) {
+    timeout_ns = (int64_t)((double)timeout_ns / turbo_factor());  // (guest time runs faster in turbo)
     clock_gettime(CLOCK_REALTIME, ts);
     ts->tv_sec += timeout_ns / 1000000000;
     ts->tv_nsec += timeout_ns % 1000000000;
@@ -186,6 +187,14 @@ static uint64_t next_thread_id = 0x50;
 // thread the same way.
 volatile int g_rt_unwind;
 static KThread *g_threads;  // every thread of this boot (g_klock)
+int kernel_thread_list(KThread **out, int max) {  // (sampler.c) the started, unfinished threads of this boot
+    int n = 0;
+    pthread_mutex_lock(&g_klock);
+    for (KThread *t = g_threads; t && n < max; t = t->anext)
+        if (t->started && !t->finished) out[n++] = t;
+    pthread_mutex_unlock(&g_klock);
+    return n;
+}
 
 void rt_unwind_point(void) {
     if (__builtin_expect(g_rt_unwind, 0) && t_cur) longjmp(t_cur->unwind, 1);
@@ -628,6 +637,7 @@ static void svc_impl(Cpu *c, uint32_t imm, uint64_t pc) {
     case 0x0B: {  // SleepThread (in slices of at most 50 ms: a reboot doesn't wait out a long sleep)
         int64_t ns = (int64_t)x[0];
         if (ns <= 0) { ksched_yield(t_cur); break; }  // (sched.c: equal or higher priority on this core first)
+        ns = (int64_t)((double)ns / turbo_factor());  // (guest time runs faster in turbo)
         sched_leave(t_cur);
         for (uint64_t end = plat_now_ns() + (uint64_t)ns, now; !g_rt_unwind && (now = plat_now_ns()) < end;) {
             uint64_t d = end - now < 50000000 ? end - now : 50000000;

@@ -188,6 +188,10 @@ int main(int argc, char **argv) {
         else if (argv[i][0] != '-') root = arg_root;
     }
     rt_paths_init();  // the data root becomes the working directory (runtime/paths.h)
+    extern bool start_point_init(void);  // LARECOMP_START (runtime/startpoint.c): boot from a saved point
+    if (start_point_init()) skip_launcher = true;
+    extern void sampler_start(void);  // LARECOMP_SAMPLE (runtime/sampler.c): where the guest threads spend time
+    sampler_start();
     for (bool title = !skip_launcher;;) {
         if (title) {  // start screen (runtime/ui/launcher.mm): game files setup, seed choice, settings
             extern void launcher_run(const char *root);

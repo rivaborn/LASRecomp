@@ -484,7 +484,7 @@ void backend_present(NvnTexture *t) {
     vk_end_pass();
     static const float black[4] = {0, 0, 0, 1};
     uint64_t t0 = SDL_GetTicksNS();
-    bool have = vk_frame_begin(black);
+    bool have = !turbo_hide_frames() && vk_frame_begin(black);  // (LARECOMP_TURBO_NO_PRESENT: counted, not shown)
     uint64_t nd = SDL_GetTicksNS() - t0;
     if (nd > 30000000) {
         static int warned;

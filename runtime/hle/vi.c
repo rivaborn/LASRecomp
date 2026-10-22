@@ -17,10 +17,14 @@ static void *vsync_thread(void *arg) {
     plat_thread_realtime(period);
     uint64_t next = plat_now_ns();
     for (;;) {
-        next += period;
+        const double turbo = turbo_factor();  // (runtime/turbo.c: faster than real time until a frame)
+        const uint64_t p = turbo > 1 ? (uint64_t)((double)period / turbo) : period;
+        next += p;
         plat_sleep_until_ns(next);
         uint64_t now = plat_now_ns();
-        if (now > next + period * 3) {
+        if (turbo > 1 && now > next + p * 3) {
+            next = now;  // (turbo: as fast as the host goes, quietly)
+        } else if (now > next + period * 3) {
             static int warned;
             if (warned++ < 20) LOG("[vi] vsync timer late by %llums (host throttling?)\n", (unsigned long long)((now - next) / 1000000));
             next = now;  // don't burst-signal to catch up

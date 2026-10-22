@@ -565,7 +565,11 @@ static void filesystem(Service *s, IpcReq *req, IpcResp *resp) {
         ipc_return_object(resp, service_new("IDirectory", directory, hd));
         break;
     }
-    case 10: break;  // Commit
+    case 10: {  // Commit
+        extern void start_point_save_committed(const char *root);  // (runtime/startpoint.c)
+        start_point_save_committed(fs->root);
+        break;
+    }
     case 11: case 12: OUT(int64_t, 0) = 0x40000000; resp_size(resp, 8); break;
     case 13: rm_rf(p, true); break;
     case 14: memset(resp->data, 0, 0x20); resp_size(resp, 0x20); break;
