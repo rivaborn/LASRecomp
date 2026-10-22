@@ -36,6 +36,7 @@ struct KThread {
     // in-place reboot (kernel_stop_threads): thread_main's setjmp point, where the thread unwinds to and ends
     jmp_buf unwind;
     bool started, finished;
+    bool spike_in_wait;    // (spike.c) blocked in kwait: counts as parked
     KThread *anext;        // every thread of this boot (g_klock)
     // scheduling (sched.c): on its core, or waiting for it in the core's ready list
     bool on_core;

@@ -103,8 +103,10 @@ static bool kwait(int64_t timeout_ns, const struct timespec *ts) {
     uint64_t t0 = plat_now_ns();
     bool r = true;
     if (t_cur) sched_leave(t_cur);  // blocked: the core goes to the next ready thread
+    if (t_cur) t_cur->spike_in_wait = true;
     if (timeout_ns < 0) pthread_cond_wait(cv, &g_klock);
     else r = pthread_cond_timedwait(cv, &g_klock, ts) == 0;
+    if (t_cur) t_cur->spike_in_wait = false;
     if (t_cur) {  // back on the core first (without g_klock: the runner may need it); callers re-check their state
         pthread_mutex_unlock(&g_klock);
         sched_enter(t_cur);
@@ -198,6 +200,9 @@ int kernel_thread_list(KThread **out, int max) {  // (sampler.c) the started, un
 
 void rt_unwind_point(void) {
     if (__builtin_expect(g_rt_unwind, 0) && t_cur) longjmp(t_cur->unwind, 1);
+    extern volatile int g_park_req;
+    extern void spike_safe_point(void);
+    if (__builtin_expect(g_park_req, 0)) spike_safe_point();
 }
 
 static void *thread_main(void *arg) {

@@ -543,6 +543,8 @@ void backend_present(NvnTexture *t) {
     if (rt_game_is_las()) warp_frame(total_frames);
     extern void reboot_test_frame(uint64_t frame);  // runtime/main.c (LARECOMP_REBOOT_AT)
     reboot_test_frame(total_frames);
+    extern void spike_frame(uint64_t frame);  // (spike.c, branch spike/checkpoint)
+    spike_frame(total_frames);
     extern void save_editor_frame(uint64_t frame);
     extern void vk_level_change_check(void);
     if (rt_game_is_las()) {  // (both read Link's Awakening's memory)
