@@ -4,6 +4,11 @@
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 #include "nvn.h"
 
@@ -28,22 +33,26 @@ static CmdRec *raw_rec(uint64_t at, uint32_t op, uint32_t size) {
     return r;
 }
 
-// Overflow chunks (rec below): the runtime's own command memory, 64 KB each, recycled. A chunk retires when its
-// command buffer moves on to other memory and is reused 4 presented frames later (what was recorded in it has
-// been executed by then).
+// Overflow chunks (rec below): the runtime's own command memory, 64 KB each. Each belongs to the game memory its
+// records continued from (its origin); the chunks of an origin are recycled when the game adds that memory again,
+// which is when it treats what was recorded there as dead (as with its own memory). So lists recorded once and
+// replayed every frame (BotW's prebuilt draw commands) keep theirs. A released chunk is reused 4 presented frames
+// later: lists are replayed by the renderer after they are submitted.
 #define CHUNK 0x10000ull
-#define MAX_CHUNKS 4096
-static struct { uint64_t addr, retired_frame; bool in_use; } chunks[MAX_CHUNKS];
+#define SHADOW_SCALE 10  // command records vs. NVN's own encoding: ~9x (a BotW draw: 400 vs 44 bytes)
+#define MAX_CHUNKS 2048  // (128 MB of the HLE heap)
+static struct { uint64_t addr, origin, released; bool in_use; } chunks[MAX_CHUNKS];
+extern uint64_t vk_frame_counter(void);
 static int nchunks;
 static pthread_mutex_t chunk_lock = PTHREAD_MUTEX_INITIALIZER;
-extern uint64_t vk_frame_counter(void);
 
-static uint64_t chunk_get(void) {
+static uint64_t chunk_get(uint64_t origin) {
     pthread_mutex_lock(&chunk_lock);
-    uint64_t now = vk_frame_counter();
+    const uint64_t now = vk_frame_counter();
     for (int i = 0; i < nchunks; i++)
-        if (!chunks[i].in_use && now - chunks[i].retired_frame >= 4) {
+        if (!chunks[i].in_use && now - chunks[i].released >= 4) {  // (the renderer may still replay it until then)
             chunks[i].in_use = true;
+            chunks[i].origin = origin;
             pthread_mutex_unlock(&chunk_lock);
             return chunks[i].addr;
         }
@@ -51,6 +60,7 @@ static uint64_t chunk_get(void) {
     if (nchunks < MAX_CHUNKS) {
         a = (uint64_t)(uintptr_t)hle_alloc(CHUNK);
         chunks[nchunks].addr = a;
+        chunks[nchunks].origin = origin;
         chunks[nchunks++].in_use = true;
         if ((nchunks & (nchunks - 1)) == 0) LOG("[nvn] command memory overflow chunks: %d (%llu KB)\n", nchunks,
                                                (unsigned long long)(nchunks * CHUNK >> 10));
@@ -60,19 +70,17 @@ static uint64_t chunk_get(void) {
     return a;
 }
 
-static void chunk_retire(uint64_t mem) {
+static void chunks_release(uint64_t origin) {
     pthread_mutex_lock(&chunk_lock);
     for (int i = 0; i < nchunks; i++)
-        if (chunks[i].addr == mem && chunks[i].in_use) {
+        if (chunks[i].in_use && chunks[i].origin == origin) {
             chunks[i].in_use = false;
-            chunks[i].retired_frame = vk_frame_counter();
-            break;
+            chunks[i].released = vk_frame_counter();
         }
     pthread_mutex_unlock(&chunk_lock);
 }
 
 static void add_command_memory(NvnCmdBuf *cb, uint64_t mem, uint64_t size) {
-    if (cb->mem && cb->size == CHUNK) chunk_retire(cb->mem);  // (a pool chunk it leaves)
     if (cb->recording && cb->mem) {
         // chain the list being recorded into the new chunk
         CmdRec *j = raw_rec(cb->mem + cb->used, CMD_JUMP, sizeof(CmdRec));
@@ -82,23 +90,58 @@ static void add_command_memory(NvnCmdBuf *cb, uint64_t mem, uint64_t size) {
     cb->size = size;
     cb->used = 0;
 }
+
+// The game gives memory (or none): its view starts there; chunks that continued from this memory before are free.
+static void game_memory(NvnCmdBuf *cb, uint64_t mem, uint64_t size) {
+    const uint64_t origin = mem ? mem : cb->guest | 1;
+    chunks_release(origin);
+    cb->game_mem = mem;
+    cb->game_size = size;
+    cb->nvn_used = 0;
+}
+
 NVN(nvnCommandBufferAddCommandMemory) {
     NvnCmdBuf *cb = cb_of(A(0));
     if (!A(1)) {  // no pool: no memory yet; the first record asks the game's memory callback (BotW does this)
-        if (!cb->recording) {
-            if (cb->mem) chunk_retire(cb->mem);
-            cb->mem = cb->size = cb->used = 0;
-        }
+        game_memory(cb, 0, 0);
+        if (!cb->recording) cb->mem = cb->size = cb->used = 0;
         return;
     }
-    add_command_memory(cb, HOST(NvnPool, A(1))->storage + A(2), A(3));
+    NvnPool *pool = HOST(NvnPool, A(1));
+    const uint64_t off = A(2), size = A(3);
+    game_memory(cb, pool->storage + off, size);
+    // Records go to the pool's shadow at the same relative place, scaled: the game's memory itself stays as it left
+    // it. Games manage command memory with the sizes NVN reports (BotW starts the next list where the last one's
+    // reported use ends), and our records are ~9x those.
+    if (!pool->cmd_shadow) {
+        pool->cmd_shadow = plat_reserve(pool->size * SHADOW_SCALE);
+        if (!pool->cmd_shadow) FATAL("nvn: no address space for command records (pool %#llx bytes)\n",
+                                      (unsigned long long)pool->size);
+    }
+    const uint64_t shadow = pool->cmd_shadow + off * SHADOW_SCALE;
+    plat_commit(shadow, size * SHADOW_SCALE);
+    add_command_memory(cb, shadow, size * SHADOW_SCALE);
+}
+
+void cmd_shadow_free(NvnPool *p) {
+    if (!p->cmd_shadow) return;
+#ifdef _WIN32
+    VirtualFree((void *)(uintptr_t)p->cmd_shadow, 0, MEM_RELEASE);
+#else
+    munmap((void *)(uintptr_t)p->cmd_shadow, p->size * SHADOW_SCALE);
+#endif
+    p->cmd_shadow = 0;
 }
 NVN(nvnCommandBufferAddControlMemory) { (void)c; }
-NVN(nvnCommandBufferGetCommandMemorySize) { RET(cb_of(A(0))->size); }
-NVN(nvnCommandBufferGetCommandMemoryUsed) { RET(cb_of(A(0))->used); }
+// The game's view (NvnCmdBuf): what real NVN would report for the memory the game gave.
+NVN(nvnCommandBufferGetCommandMemorySize) { RET(cb_of(A(0))->game_size); }
+NVN(nvnCommandBufferGetCommandMemoryUsed) {
+    NvnCmdBuf *cb = cb_of(A(0));
+    RET(cb->nvn_used < cb->game_size ? cb->nvn_used : cb->game_size);
+}
 NVN(nvnCommandBufferGetCommandMemoryFree) {
     NvnCmdBuf *cb = cb_of(A(0));
-    RET(cb->size > cb->used + JUMP_RESERVE ? cb->size - cb->used - JUMP_RESERVE : 0);
+    RET(cb->game_size > cb->nvn_used ? cb->game_size - cb->nvn_used : 0);
 }
 NVN(nvnCommandBufferGetControlMemorySize) { RET(0x10000); }
 NVN(nvnCommandBufferGetControlMemoryUsed) { RET(0); }
@@ -113,30 +156,37 @@ NVN(nvnCommandBufferSetCommandMemoryCallbackEnabled) { (void)c; }
 // arguments first.
 static CmdRec *rec(Cpu *c, NvnCmdBuf *cb, uint32_t op, uint32_t extra) {
     uint32_t size = (uint32_t)((sizeof(CmdRec) + extra + 7) & ~7u);
-    for (int tries = 0; !cb->mem || cb->used + size + JUMP_RESERVE > cb->size; tries++) {
-        if (!cb->callback || tries == 2) {
-            // A CmdRec is far bigger than real NVN's encoding of most commands, so memory the game sized for real
-            // hardware (BotW: a 0x200-byte buffer on the stack) can run out where it never would on a Switch. The
-            // runtime then chains a chunk of its own; the game never sees it.
-            if (size + JUMP_RESERVE > CHUNK) {  // (bigger than a chunk: its own memory, kept)
-                uint64_t n = size + JUMP_RESERVE;
-                add_command_memory(cb, (uint64_t)(uintptr_t)hle_alloc(n), n);
-            } else {
-                add_command_memory(cb, chunk_get(), CHUNK);
-            }
-            break;
+    // what real NVN would use for this command: a few GPU method words, plus any inline data (estimate: 5 records
+    // for a BotW draw are 45 bytes here, 44 on the hardware)
+    const uint32_t nvn = 9 + ((extra + 3) & ~3u);
+    for (int tries = 0; !cb->mem || cb->used + size + JUMP_RESERVE > cb->size;) {
+        if (cb->callback && tries < 2 && cb->nvn_used + nvn > cb->game_size) {
+            // full in the game's view too: as on the hardware, the game's callback adds memory
+            uint64_t saved[8];
+            memcpy(saved, c->x, sizeof saved);
+            c->x[0] = cb->guest;
+            c->x[1] = 0;  // NVN_COMMAND_BUFFER_MEMORY_EVENT_OUT_OF_COMMAND_MEMORY
+            c->x[2] = nvn;
+            c->x[3] = cb->callback_data;
+            guest_call(c, cb->callback);
+            memcpy(c->x, saved, sizeof saved);
+            tries++;
+            continue;
         }
-        uint64_t saved[8];
-        memcpy(saved, c->x, sizeof saved);
-        c->x[0] = cb->guest;
-        c->x[1] = 0;  // NVN_COMMAND_BUFFER_MEMORY_EVENT_OUT_OF_COMMAND_MEMORY
-        c->x[2] = size + JUMP_RESERVE;
-        c->x[3] = cb->callback_data;
-        guest_call(c, cb->callback);
-        memcpy(c->x, saved, sizeof saved);
+        // Our records outgrew memory the game sized for real NVN (or it gave none and has no callback): the
+        // runtime chains a chunk of its own, which the game never sees.
+        const uint64_t origin = cb->game_mem ? cb->game_mem : cb->guest | 1;
+        if (size + JUMP_RESERVE > CHUNK) {  // (bigger than a chunk: its own memory, kept)
+            uint64_t n = size + JUMP_RESERVE;
+            add_command_memory(cb, (uint64_t)(uintptr_t)hle_alloc(n), n);
+        } else {
+            add_command_memory(cb, chunk_get(origin), CHUNK);
+        }
+        break;
     }
     CmdRec *r = raw_rec(cb->mem + cb->used, op, size);
     cb->used += size;
+    cb->nvn_used += nvn;
     return r;
 }
 

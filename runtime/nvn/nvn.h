@@ -19,6 +19,7 @@
 typedef struct NvnPool {
     uint64_t storage, size;
     uint32_t flags;
+    uint64_t cmd_shadow;  // host memory for command records made in this pool (cmdbuf.c), SHADOW_SCALE x its size
 } NvnPool;
 
 typedef struct NvnTexture {
@@ -94,6 +95,9 @@ typedef struct {
     uint64_t callback, callback_data;
     bool recording;
     uint64_t guest;  // the guest NVNcommandBuffer*
+    // The game's view (cmdbuf.c): the memory it gave and how much real NVN would have used of it. A CmdRec is far
+    // bigger than NVN's own encoding, and games size memory from these numbers (BotW measures recorded draws).
+    uint64_t game_mem, game_size, nvn_used;
 } NvnCmdBuf;
 
 // One recorded command: header, the call's integer and float arguments, then copied data.

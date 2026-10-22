@@ -43,6 +43,11 @@ bool plat_reset_guest(uint64_t lo, uint64_t hi) {
 
 void plat_commit(uint64_t addr, uint64_t size) { (void)addr; (void)size; }
 
+uint64_t plat_reserve(uint64_t size) {
+    void *p = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+    return p == MAP_FAILED ? 0 : (uint64_t)(uintptr_t)p;
+}
+
 int plat_written_pages(uint64_t addr, uint64_t size, uint64_t *pages, int max, uint64_t *page) {  // (no write tracking)
     (void)addr; (void)size; (void)pages; (void)max; (void)page;
     return -1;

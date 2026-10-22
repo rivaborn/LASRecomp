@@ -106,6 +106,10 @@ void plat_commit(uint64_t addr, uint64_t size) {
                 (unsigned long long)size, GetLastError());
 }
 
+uint64_t plat_reserve(uint64_t size) {
+    return (uint64_t)(uintptr_t)VirtualAlloc(NULL, size, MEM_RESERVE, PAGE_READWRITE);
+}
+
 int plat_protect(uint64_t addr, uint64_t size, int prot) {
     DWORD p = prot == PLAT_PROT_NONE ? PAGE_NOACCESS : prot == PLAT_PROT_READ ? PAGE_READONLY : PAGE_READWRITE, old;
     if (addr >= g_lo && addr < g_hi) plat_commit(addr, size);

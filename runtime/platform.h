@@ -21,6 +21,9 @@ bool plat_reserve_guest(uint64_t lo, uint64_t hi);
 // Make sure [addr, addr+size) inside the guest window is backed (before the OS itself writes there, e.g.
 // file reads); a no-op where the whole window is backed from the start.
 void plat_commit(uint64_t addr, uint64_t size);
+// Host address space outside the guest window, read/write once committed (plat_commit; POSIX: on first touch).
+// 0 if it can't be reserved.
+uint64_t plat_reserve(uint64_t size);
 // In-place reboot: every page of [lo, hi) back to zero (and unbacked), the window still claimed.
 bool plat_reset_guest(uint64_t lo, uint64_t hi);
 // Pages of [addr, addr+size) in the guest window the CPU wrote since the last call over them (write tracking: Windows

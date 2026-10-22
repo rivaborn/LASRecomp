@@ -42,7 +42,23 @@ NVN(nvnDeviceInitialize) {
 }
 NVN(nvnDeviceFinalize) { (void)c; }
 NVN(nvnDeviceSetDebugLabel) { (void)c; }
-NVN(nvnDeviceGetInteger) { *(int32_t *)AP(2) = (int32_t)device_integer((uint32_t)A(1)); }
+NVN(nvnDeviceGetInteger) {
+    const uint32_t v = device_integer((uint32_t)A(1));
+    *(int32_t *)AP(2) = (int32_t)v;
+    static int log = -1;  // LARECOMP_LOG_DEVINFO: every query once per (index, caller)
+    if (log < 0) log = getenv("LARECOMP_LOG_DEVINFO") != NULL;
+    if (log) {
+        static uint64_t seen[512];
+        static int n;
+        const uint64_t key = (A(1) << 40) ^ c->x[30];
+        bool found = false;
+        for (int i = 0; i < n && !found; i++) found = seen[i] == key;
+        if (!found && n < 512) {
+            seen[n++] = key;
+            LOG("[nvn] DeviceGetInteger(%u) = %u (lr %llx)\n", (unsigned)A(1), v, (unsigned long long)c->x[30]);
+        }
+    }
+}
 NVN(nvnDeviceGetCurrentTimestampInNanoseconds) {
     RET(plat_now_ns());
 }
@@ -190,7 +206,13 @@ NVN(nvnMemoryPoolInitialize) {
     SET_HOST(A(0), p);
     RET(1);
 }
-NVN(nvnMemoryPoolFinalize) { free(HOST(NvnPool, A(0))); SET_HOST(A(0), 0); }
+NVN(nvnMemoryPoolFinalize) {
+    NvnPool *p = HOST(NvnPool, A(0));
+    extern void cmd_shadow_free(NvnPool *p);
+    if (p) cmd_shadow_free(p);
+    free(p);
+    SET_HOST(A(0), 0);
+}
 NVN(nvnMemoryPoolSetDebugLabel) { (void)c; }
 NVN(nvnMemoryPoolMap) { RET(HOST(NvnPool, A(0))->storage); }
 NVN(nvnMemoryPoolGetBufferAddress) { RET(HOST(NvnPool, A(0))->storage); }  // GPU address == CPU address
