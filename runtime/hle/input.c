@@ -381,6 +381,7 @@ static void fill_state(Cpu *c) {
     static int nlog;
     if (nlog < 6 && (sampling % 600) == 1) { nlog++; LOG("[input] GetNpadState id %#x lr %llx\n", id, c->x[30]); }
     if (id != 0) return;  // docked: only player 1 (FullKey); Handheld stays disconnected
+    if (rt_game_is_las()) {  // Link's Awakening's per-frame hooks read its memory: only for it
     extern void warp_game_tick(Cpu *c);
     warp_game_tick(c);  // game main thread, once per frame: apply a queued warp
     { extern void give_item_tick(Cpu *c, uint64_t frame); extern uint64_t renderer_present_count(void);
@@ -393,8 +394,9 @@ static void fill_state(Cpu *c) {
       qol_tick();
       extern void pets_game_tick(Cpu *c);
       pets_game_tick(c); }
-    extern uint64_t g_watch_lo, g_watch_hi;
     if (id == 0 && !g_pad_obj) g_pad_obj = c->x[1] - 8;
+    }
+    extern uint64_t g_watch_lo, g_watch_hi;
     if (id == 0 && !g_watch_lo && getenv("LARECOMP_WATCH_PAD")) {
         unsigned lo = 0x98 + 0x10, hi = 0x98 + 0x48;  // offsets from the controller manager
         sscanf(getenv("LARECOMP_WATCH_PAD"), "%x,%x", &lo, &hi);
@@ -471,6 +473,19 @@ HLE_FUNC("_ZN2nn3hid12GetNpadStateEPNS0_16NpadJoyDualStateERKj", hid_state_dual)
 HLE_FUNC("_ZN2nn3hid12GetNpadStateEPNS0_16NpadJoyLeftStateERKj", hid_state_left) { fill_state(c); }
 HLE_FUNC("_ZN2nn3hid12GetNpadStateEPNS0_17NpadHandheldStateERKj", hid_state_handheld) { fill_state(c); }
 HLE_FUNC("_ZN2nn3hid12GetNpadStateEPNS0_17NpadJoyRightStateERKj", hid_state_right) { fill_state(c); }
+// GetNpadStates(State *out, int count, const NpadIdType &id) -> the number written (newest first): one, the current
+// state (BotW reads input this way; the SDK's own version reads HID shared memory, which nothing fills here)
+static void fill_states(Cpu *c) {
+    if ((int32_t)c->x[1] < 1) { c->x[0] = 0; return; }
+    c->x[1] = c->x[2];
+    fill_state(c);
+    c->x[0] = 1;
+}
+HLE_FUNC("_ZN2nn3hid13GetNpadStatesEPNS0_16NpadFullKeyStateEiRKj", hid_states_fullkey) { fill_states(c); }
+HLE_FUNC("_ZN2nn3hid13GetNpadStatesEPNS0_16NpadJoyDualStateEiRKj", hid_states_dual) { fill_states(c); }
+HLE_FUNC("_ZN2nn3hid13GetNpadStatesEPNS0_16NpadJoyLeftStateEiRKj", hid_states_left) { fill_states(c); }
+HLE_FUNC("_ZN2nn3hid13GetNpadStatesEPNS0_17NpadHandheldStateEiRKj", hid_states_handheld) { fill_states(c); }
+HLE_FUNC("_ZN2nn3hid13GetNpadStatesEPNS0_17NpadJoyRightStateEiRKj", hid_states_right) { fill_states(c); }
 
 // FullKey for player 1 only (we report docked mode, where Handheld is unavailable)
 HLE_FUNC("_ZN2nn3hid15GetNpadStyleSetERKj", hid_style_set) {
