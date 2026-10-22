@@ -35,6 +35,7 @@ bool warp_tab_draw(float scale);  // warp_tab.mm: true when a warp started
 extern "C" void cheats_draw(float scale);  // cheats.mm
 extern "C" void difficulty_draw(float scale);  // difficulty.mm
 void controls_bindings_draw(float scale);  // controls_ui.mm
+void controls_pad_select_draw(void);
 #include "../input_bind.h"
 #include "../paths.h"
 }
@@ -567,6 +568,8 @@ static void tab_quit(float scale, bool in_game) {
 }
 
 static void tab_about(void) {
+    header("Controller");
+    controls_pad_select_draw();
     header("Movement");
     toggle("D-pad moves Link", &g_settings.dpad_move);
     toggle("360-degree movement", &g_settings.move_360);

@@ -35,18 +35,63 @@ static void cell(int dev, int slot, int fam, int cap_dev, int cap_slot, int ms_l
     if (waiting && !ImGui::IsItemVisible()) ImGui::SetScrollHereY(0.5f);  // (a capture started by a test hook)
 }
 
+// Settings > Controls, first section: the controller used in game, one of the connected ones, remembered by its
+// GUID (runtime/hle/input.c input_select_pad)
+extern "C" void controls_pad_select_draw(void) {
+    int n = 0;
+    SDL_JoystickID *ids = SDL_GetGamepads(&n);
+    char guids[16][64];
+    bool chosen_here = false;
+    for (int i = 0; i < n && i < 16; i++) {
+        SDL_GUIDToString(SDL_GetGamepadGUIDForID(ids[i]), guids[i], sizeof guids[i]);
+        chosen_here |= g_settings.pad_guid[0] && !strcmp(guids[i], g_settings.pad_guid);
+    }
+    char current[200];
+    if (!g_settings.pad_guid[0]) snprintf(current, sizeof current, "Automatic (first connected)");
+    else snprintf(current, sizeof current, "%s%s", g_settings.pad_name, chosen_here ? "" : "  (not connected)");
+    extern void input_select_pad(void);
+    ImGui::PushID("pad_select");  // (laid out like the menu's other rows: label, then the choice from 45% across)
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Controller used in game");
+    ImGui::SameLine(ImGui::GetContentRegionAvail().x * 0.45f);
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::BeginCombo("##c", current)) {
+        if (ImGui::Selectable("Automatic (first connected)", !g_settings.pad_guid[0])) {
+            g_settings.pad_guid[0] = g_settings.pad_name[0] = 0;
+            settings_save();
+            input_select_pad();
+        }
+        for (int i = 0; i < n && i < 16; i++) {
+            const char *name = SDL_GetGamepadNameForID(ids[i]);
+            char item[220];
+            snprintf(item, sizeof item, "%s##pad%d", name ? name : "Controller", i);
+            if (ImGui::Selectable(item, !strcmp(guids[i], g_settings.pad_guid))) {
+                snprintf(g_settings.pad_guid, sizeof g_settings.pad_guid, "%s", guids[i]);
+                snprintf(g_settings.pad_name, sizeof g_settings.pad_name, "%s", name ? name : "Controller");
+                settings_save();
+                input_select_pad();
+            }
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::PopID();
+    SDL_free(ids);
+    ImGui::PushTextWrapPos(0);
+    ImGui::TextDisabled("With several controllers connected, the game reads the one chosen here (kept when it's "
+                        "unplugged and plugged back in). Automatic: the first one connected.");
+    ImGui::PopTextWrapPos();
+}
+
 extern "C" void controls_bindings_draw(float scale) {
     (void)scale;
     int fam = bind_label_family();
     static const char *const fam_name[] = {"Nintendo", "Xbox", "PlayStation"};
     int n = 0;
-    SDL_JoystickID *ids = SDL_GetGamepads(&n);
-    const char *pad_name = ids && n > 0 ? SDL_GetGamepadNameForID(ids[0]) : NULL;
+    SDL_free(SDL_GetGamepads(&n));
     char line[200];
-    if (n > 0) snprintf(line, sizeof line, "Controller: %s  (%s button names)", pad_name ? pad_name : "connected", fam_name[fam % 3]);
+    if (n > 0) snprintf(line, sizeof line, "%d controller%s connected  (%s button names)", n, n == 1 ? "" : "s", fam_name[fam % 3]);
     else snprintf(line, sizeof line, "No controller connected  (%s button names shown)", fam_name[fam % 3]);
-    SDL_free(ids);
-    ImGui::TextUnformatted(line);
+    ImGui::TextDisabled("%s", line);
     ImGui::PushTextWrapPos(0);
     ImGui::TextDisabled("Select a binding, then press the new button or key. Esc (or 5 seconds) cancels. A button "
                         "that's already in use swaps with the old one.");

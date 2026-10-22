@@ -136,14 +136,47 @@ int input_pad_family(void) {
     return env >= 0 ? env : pad_family;
 }
 
+// The controller chosen in Settings > Controls (settings pad_guid; empty = the first connected one)
+static bool pad_is_chosen(SDL_JoystickID id) {
+    if (!g_settings.pad_guid[0]) return false;
+    char guid[64];
+    SDL_GUIDToString(SDL_GetGamepadGUIDForID(id), guid, sizeof guid);
+    return !strcmp(guid, g_settings.pad_guid);
+}
+
+static void open_pad(SDL_JoystickID id) {
+    if (pad) SDL_CloseGamepad(pad);
+    pad = SDL_OpenGamepad(id);
+    LOG("[input] gamepad: %s%s\n", pad ? SDL_GetGamepadName(pad) : "(failed to open)", pad_is_chosen(id) ? " (chosen)" : "");
+    note_family();
+    recompute_pad();
+}
+
+// Opens the chosen controller if it is connected, else the first one (also after the choice changed)
+void input_select_pad(void) {
+    int n = 0;
+    SDL_JoystickID *ids = SDL_GetGamepads(&n);
+    int pick = n > 0 ? 0 : -1;
+    for (int i = 0; i < n; i++)
+        if (pad_is_chosen(ids[i])) pick = i;
+    if (g_settings.pad_guid[0] && pick >= 0 && !pad_is_chosen(ids[pick])) {
+        static bool told;
+        if (!told) LOG("[input] the chosen controller (%s) isn't connected: using the first one\n", g_settings.pad_name);
+        told = true;
+    }
+    if (pick < 0) {
+        if (pad) { SDL_CloseGamepad(pad); pad = NULL; note_family(); recompute_pad(); }
+    } else if (!pad || SDL_GetGamepadID(pad) != ids[pick]) {
+        open_pad(ids[pick]);
+    }
+    SDL_free(ids);
+}
+
 void input_handle_event(const SDL_Event *e) {
     static bool scanned;  // pads present at startup: their ADDED event may have gone to the start screen's loop
     if (!scanned) {
         scanned = true;
-        int n = 0;
-        SDL_JoystickID *ids = SDL_GetGamepads(&n);
-        if (n > 0 && !pad) { pad = SDL_OpenGamepad(ids[0]); LOG("[input] gamepad: %s\n", SDL_GetGamepadName(pad)); note_family(); }
-        SDL_free(ids);
+        input_select_pad();
     }
     switch (e->type) {
     case SDL_EVENT_KEY_DOWN: case SDL_EVENT_KEY_UP:
@@ -151,11 +184,16 @@ void input_handle_event(const SDL_Event *e) {
         if (e->key.scancode < SDL_SCANCODE_COUNT) keys_down[e->key.scancode] = e->type == SDL_EVENT_KEY_DOWN;
         recompute_keyboard();
         break;
-    case SDL_EVENT_GAMEPAD_ADDED:
-        if (!pad) { pad = SDL_OpenGamepad(e->gdevice.which); LOG("[input] gamepad: %s\n", SDL_GetGamepadName(pad)); note_family(); }
+    case SDL_EVENT_GAMEPAD_ADDED:  // (the chosen one takes over when it is plugged in)
+        if (!pad || pad_is_chosen(e->gdevice.which)) open_pad(e->gdevice.which);
         break;
     case SDL_EVENT_GAMEPAD_REMOVED:
-        if (pad && SDL_GetGamepadID(pad) == e->gdevice.which) { SDL_CloseGamepad(pad); pad = NULL; note_family(); }
+        if (pad && SDL_GetGamepadID(pad) == e->gdevice.which) {
+            SDL_CloseGamepad(pad);
+            pad = NULL;
+            input_select_pad();  // (another connected one, if any)
+            note_family();
+        }
         recompute_pad();
         break;
     case SDL_EVENT_GAMEPAD_AXIS_MOTION: case SDL_EVENT_GAMEPAD_BUTTON_DOWN: case SDL_EVENT_GAMEPAD_BUTTON_UP:
