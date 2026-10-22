@@ -26,7 +26,7 @@ static bool is_dir(const char *p) {
     return stat(p, &st) == 0 && S_ISDIR(st.st_mode);
 }
 
-static void remove_tree(const char *p) {
+void rt_remove_tree(const char *p) {  // (checkpoint.c too)
     DIR *d = opendir(p);
     if (!d) { unlink(p); return; }
     struct dirent *e;
@@ -34,7 +34,7 @@ static void remove_tree(const char *p) {
         if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
         char c[2048];
         snprintf(c, sizeof c, "%s/%s", p, e->d_name);
-        remove_tree(c);
+        rt_remove_tree(c);
     }
     closedir(d);
     rmdir(p);
@@ -50,7 +50,7 @@ static bool copy_file(const char *from, const char *to) {
     return ok;
 }
 
-static int copy_tree(const char *from, const char *to) {  // returns the number of files copied, -1 on an error
+int rt_copy_tree(const char *from, const char *to) {  // files copied, -1 on an error (checkpoint.c too)
     DIR *d = opendir(from);
     if (!d) return -1;
     mkdir(to, 0755);
@@ -62,7 +62,7 @@ static int copy_tree(const char *from, const char *to) {  // returns the number 
         snprintf(a, sizeof a, "%s/%s", from, e->d_name);
         snprintf(b, sizeof b, "%s/%s", to, e->d_name);
         if (is_dir(a)) {
-            int k = copy_tree(a, b);
+            int k = rt_copy_tree(a, b);
             n = k < 0 ? -1 : n + k;
         } else {
             n = copy_file(a, b) ? n + 1 : -1;
@@ -98,7 +98,7 @@ bool start_point_init(void) {
     char dir[1024];
     snprintf(dir, sizeof dir, "savepoints/%s", name);
     if (!is_dir(dir)) FATAL("LARECOMP_START: no start point %s/%s\n", rt_data_root(), dir);
-    remove_tree("save_start");
+    rt_remove_tree("save_start");
     char from[1100];
     int files = 0;
     DIR *d = opendir(dir);  // every save_<n>/ of the point
@@ -108,7 +108,7 @@ bool start_point_init(void) {
         char to[1100];
         snprintf(from, sizeof from, "%s/%s", dir, e->d_name);
         snprintf(to, sizeof to, "save_start/%s", e->d_name);
-        int k = copy_tree(from, to);
+        int k = rt_copy_tree(from, to);
         if (k < 0) FATAL("LARECOMP_START: copying %s failed\n", from);
         files += k;
     }
@@ -135,7 +135,7 @@ void start_point_save_committed(const char *root) {
     }
     mkdir(dir, 0755);
     snprintf(to, sizeof to, "%s/%s", dir, sub);
-    int k = copy_tree(root, to);
+    int k = rt_copy_tree(root, to);
     snprintf(to, sizeof to, "%s/start.txt", dir);
     FILE *f = fopen(to, "w");
     if (f) {

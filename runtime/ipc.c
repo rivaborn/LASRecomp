@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "arena.h"
 #include "hle.h"
 #include "ipc.h"
 
@@ -24,7 +25,7 @@ static void stub_handler(Service *s, IpcReq *req, IpcResp *resp) {
 }
 
 Service *service_new(const char *name, ServiceHandler h, void *state) {
-    Service *s = calloc(1, sizeof *s);
+    Service *s = rt_obj_calloc(1, sizeof *s);
     s->name = strdup(name);
     s->handler = h;
     s->state = state;
@@ -43,7 +44,7 @@ Service *service_lookup(const char *name) {
 void ipc_return_object(IpcResp *resp, Service *s) { resp->objects[resp->nobjects++] = s; }
 
 static uint32_t session_new(Service *s) {
-    KSession *k = calloc(1, sizeof *k);
+    KSession *k = rt_obj_calloc(1, sizeof *k);
     k->obj.type = KOBJ_SESSION;
     k->svc = s;
     s->refs++;
@@ -179,7 +180,7 @@ int ipc_handle_request(Cpu *c, uint32_t handle) {
         LOG("[ipc] control %u on %s (handle %x)\n", req.cmd, sess->svc->name, handle);
         switch (req.cmd) {
         case 0:  // ConvertCurrentObjectToDomain
-            sess->domain = calloc(1, sizeof(Domain));
+            sess->domain = rt_obj_calloc(1, sizeof(Domain));
             sess->domain->objs[1] = sess->svc;
             resp_size(&resp, 4);
             *(uint32_t *)resp.data = 1;

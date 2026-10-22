@@ -5,6 +5,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "checkpoint.h"
 #include "gamelib.h"
 #include "hle.h"
 #include "kernel.h"
@@ -95,6 +96,7 @@ uint64_t guest_sym(const char *name) {
 
 static uint64_t hle_next = HLE_HEAP;
 RT_ON_RESET(hle_heap_reset) { hle_next = HLE_HEAP; }  // (guest memory, wiped by the reboot)
+void dispatch_checkpoint_statics(void) { rt_checkpoint_static(&hle_next, sizeof hle_next); }  // (checkpoint.c)
 
 void *hle_alloc(uint64_t size) {
     static pthread_mutex_t m = PTHREAD_MUTEX_INITIALIZER;

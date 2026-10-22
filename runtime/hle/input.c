@@ -181,6 +181,11 @@ void input_handle_event(const SDL_Event *e) {
     switch (e->type) {
     case SDL_EVENT_KEY_DOWN: case SDL_EVENT_KEY_UP:
         if (e->type == SDL_EVENT_KEY_DOWN && e->key.scancode == SDL_SCANCODE_F9 && !e->key.repeat) g_debug_frame_request = 1;
+        if (e->type == SDL_EVENT_KEY_DOWN && !e->key.repeat &&
+            (e->key.scancode == SDL_SCANCODE_F5 || e->key.scancode == SDL_SCANCODE_F8)) {  // checkpoint / rewind
+            extern void checkpoint_key(int which);  // (runtime/checkpoint.c; LARECOMP_CHECKPOINT only)
+            checkpoint_key(e->key.scancode == SDL_SCANCODE_F5 ? 1 : 2);
+        }
         if (e->key.scancode < SDL_SCANCODE_COUNT) keys_down[e->key.scancode] = e->type == SDL_EVENT_KEY_DOWN;
         recompute_keyboard();
         break;

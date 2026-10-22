@@ -10,6 +10,8 @@
 #include <sys/mman.h>
 #endif
 
+#include "../arena.h"
+#include "../checkpoint.h"
 #include "nvn.h"
 
 #define JUMP_RESERVE (sizeof(CmdRec) + 8)
@@ -17,12 +19,12 @@
 static NvnCmdBuf *cb_of(uint64_t guest) { return HOST(NvnCmdBuf, guest); }
 
 NVN(nvnCommandBufferInitialize) {
-    NvnCmdBuf *cb = calloc(1, sizeof *cb);
+    NvnCmdBuf *cb = rt_obj_calloc(1, sizeof *cb);
     cb->guest = A(0);
     SET_HOST(A(0), cb);
     RET(1);
 }
-NVN(nvnCommandBufferFinalize) { free(cb_of(A(0))); SET_HOST(A(0), 0); }
+NVN(nvnCommandBufferFinalize) { rt_obj_free(cb_of(A(0))); SET_HOST(A(0), 0); }
 NVN(nvnCommandBufferSetDebugLabel) { (void)c; }
 
 static CmdRec *raw_rec(uint64_t at, uint32_t op, uint32_t size) {
@@ -45,6 +47,10 @@ static CmdRec *raw_rec(uint64_t at, uint32_t op, uint32_t size) {
 static struct { uint64_t addr, origin, released; bool in_use; } chunks[MAX_CHUNKS];
 extern uint64_t vk_frame_counter(void);
 static int nchunks;
+void cmdbuf_checkpoint_statics(void) {  // (runtime/checkpoint.c)
+    rt_checkpoint_static(chunks, sizeof chunks);
+    rt_checkpoint_static(&nchunks, sizeof nchunks);
+}
 static pthread_mutex_t chunk_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static uint64_t chunk_get(uint64_t origin) {
@@ -116,6 +122,7 @@ NVN(nvnCommandBufferAddCommandMemory) {
     // reported use ends), and our records are ~9x those.
     if (!pool->cmd_shadow) {
         pool->cmd_shadow = plat_reserve((pool->size + SHADOW_SLACK) * SHADOW_SCALE);
+        rt_checkpoint_range(pool->cmd_shadow, (pool->size + SHADOW_SLACK) * SHADOW_SCALE);  // (records: host memory)
         if (!pool->cmd_shadow) FATAL("nvn: no address space for command records (pool %#llx bytes)\n",
                                       (unsigned long long)pool->size);
     }

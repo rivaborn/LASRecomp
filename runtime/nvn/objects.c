@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "../arena.h"
+#include "../checkpoint.h"
 #include "../kernel.h"
 #include "nvn.h"
 
@@ -164,7 +166,7 @@ NVN(nvnQueueFinish) { (void)c; renderer_sync(); }
 
 static NvnSync *sync_of(uint64_t guest) {
     NvnSync *s = HOST(NvnSync, guest);
-    if (!s) { s = calloc(1, sizeof *s); SET_HOST(guest, s); }
+    if (!s) { s = rt_obj_calloc(1, sizeof *s); SET_HOST(guest, s); }
     return s;
 }
 uint64_t renderer_fence_seq(void);
@@ -174,8 +176,8 @@ void nvn_sync_set_seq(uint64_t guest, uint64_t seq) { NvnSync *s = sync_of(guest
 NVN(nvnQueueWaitSync) { RET(1); }
 
 // ================================================================== sync / event
-NVN(nvnSyncInitialize) { SET_HOST(A(0), calloc(1, sizeof(NvnSync))); RET(1); }
-NVN(nvnSyncFinalize) { free(HOST(NvnSync, A(0))); SET_HOST(A(0), 0); }
+NVN(nvnSyncInitialize) { SET_HOST(A(0), rt_obj_calloc(1, sizeof(NvnSync))); RET(1); }
+NVN(nvnSyncFinalize) { rt_obj_free(HOST(NvnSync, A(0))); SET_HOST(A(0), 0); }
 NVN(nvnSyncSetDebugLabel) { (void)c; }
 void renderer_flush(void);
 NVN(nvnSyncWait) {  // NVN_SYNC_WAIT_RESULT_ALREADY_SIGNALED
@@ -225,7 +227,7 @@ NVN(nvnMemoryPoolBuilderGetMemory) { RET(G(uint64_t, A(0), 0x10)); }
 NVN(nvnMemoryPoolBuilderGetSize) { RET(G(uint64_t, A(0), 0x18)); }
 
 NVN(nvnMemoryPoolInitialize) {
-    NvnPool *p = calloc(1, sizeof *p);
+    NvnPool *p = rt_obj_calloc(1, sizeof *p);
     p->storage = G(uint64_t, A(1), 0x10);
     p->size = G(uint64_t, A(1), 0x18);
     p->flags = G(uint32_t, A(1), 8);
@@ -242,8 +244,8 @@ NVN(nvnMemoryPoolFinalize) {
     NvnPool *p = HOST(NvnPool, A(0));
     extern void cmd_shadow_free(NvnPool *p);
     if (p) cmd_shadow_free(p);
-    if (p) { free(p->maps); free(p->texs); }
-    free(p);
+    if (p) { rt_obj_free(p->maps); rt_obj_free(p->texs); }
+    rt_obj_free(p);
     SET_HOST(A(0), 0);
 }
 NVN(nvnMemoryPoolSetDebugLabel) { (void)c; }
@@ -267,7 +269,7 @@ void pool_add_texture(NvnPool *p, NvnTexture *t) {
     if (!p || !(p->flags & NVN_POOL_VIRTUAL)) return;
     if (p->ntexs == p->cap_texs) {
         p->cap_texs = p->cap_texs ? p->cap_texs * 2 : 64;
-        p->texs = realloc(p->texs, p->cap_texs * sizeof *p->texs);
+        p->texs = rt_obj_realloc(p->texs, p->cap_texs * sizeof *p->texs);
     }
     p->texs[p->ntexs++] = t;
 }
@@ -300,7 +302,7 @@ NVN(nvnMemoryPoolMapVirtual) {
         }
         p->nmaps = k;
         if (pp && pp->storage) {
-            p->maps = realloc(p->maps, (p->nmaps + 1) * sizeof *p->maps);
+            p->maps = rt_obj_realloc(p->maps, (p->nmaps + 1) * sizeof *p->maps);
             p->maps[p->nmaps++] = (struct PoolMap){virt, size, pp->storage + phys_off};
         }
     }
@@ -447,7 +449,7 @@ NVN(nvnTextureBuilderGetStorageSize) { RET(builder_storage_size(A(0))); }
 NVN(nvnTextureBuilderGetStorageAlignment) { RET(is_linear(A(0)) ? 32 : 512); }
 
 static NvnTexture *texture_from_builder(uint64_t b) {
-    NvnTexture *t = calloc(1, sizeof *t);
+    NvnTexture *t = rt_obj_calloc(1, sizeof *t);
     t->target = G(uint32_t, b, 0xC);
     t->flags = G(uint32_t, b, 8);
     t->width = G(uint32_t, b, 0x10);
@@ -488,6 +490,54 @@ static pthread_mutex_t tex_lock = PTHREAD_MUTEX_INITIALIZER;
 static TexSlot *tex_tab;
 static size_t tex_cap, tex_n;
 
+void nvn_checkpoint_statics(void) {  // (runtime/checkpoint.c)
+    rt_checkpoint_static(&next_debug_id, sizeof next_debug_id);
+    rt_checkpoint_static(&window_origin, sizeof window_origin);
+    rt_checkpoint_static(&depth_mode, sizeof depth_mode);
+    rt_checkpoint_static(&tex_tab, sizeof tex_tab);
+    rt_checkpoint_static(&tex_cap, sizeof tex_cap);
+    rt_checkpoint_static(&tex_n, sizeof tex_n);
+}
+// A rewind keeps the GPU images: texture objects are never freed, so the checkpoint's are today's objects too.
+// Their images hold what the GPU drew (render targets, the exposure history): dropping them all left the game's
+// temporal effects reading blank images (BotW: a white screen). Before the arena goes back, each object's image is
+// noted; after, the checkpoint's objects get theirs again and objects made since the checkpoint lose theirs.
+// (Render targets thus hold what was drawn last, not what they held at the checkpoint.)
+typedef struct { NvnTexture *t; void *backend; } TexKeep;
+static TexKeep *g_keep;
+static size_t g_nkeep;
+static int cmp_keep(const void *a, const void *b) {
+    uintptr_t x = (uintptr_t)((const TexKeep *)a)->t, y = (uintptr_t)((const TexKeep *)b)->t;
+    return x < y ? -1 : x > y;
+}
+void nvn_checkpoint_keep_images(void) {  // before
+    free(g_keep);
+    g_keep = malloc((tex_cap ? tex_cap : 1) * sizeof *g_keep);
+    g_nkeep = 0;
+    for (size_t i = 0; i < tex_cap; i++)
+        if (tex_tab[i].t) g_keep[g_nkeep++] = (TexKeep){tex_tab[i].t, tex_tab[i].t->backend};
+    qsort(g_keep, g_nkeep, sizeof *g_keep, cmp_keep);
+}
+void nvn_checkpoint_rewound(void) {  // after (tex_tab is the checkpoint's)
+    pthread_mutex_lock(&retire_lock);
+    nretired = 0;  // (retired since the checkpoint: decided again below)
+    pthread_mutex_unlock(&retire_lock);
+    bool *in_ck = calloc(g_nkeep ? g_nkeep : 1, 1);
+    for (size_t i = 0; i < tex_cap; i++) {
+        NvnTexture *t = tex_tab[i].t;
+        if (!t) continue;
+        TexKeep key = {t, NULL}, *k = bsearch(&key, g_keep, g_nkeep, sizeof *g_keep, cmp_keep);
+        t->backend = k ? k->backend : NULL;
+        if (k) in_ck[k - g_keep] = true;
+    }
+    for (size_t i = 0; i < g_nkeep; i++)
+        if (!in_ck[i] && g_keep[i].backend) {  // made after the checkpoint: its image goes
+            g_keep[i].t->backend = g_keep[i].backend;
+            texture_retire(g_keep[i].t);
+        }
+    free(in_ck);
+}
+
 static uint64_t tex_key_hash(const TexKey *k) {
     const uint8_t *p = (const uint8_t *)k;
     uint64_t h = 0xcbf29ce484222325ull;
@@ -511,10 +561,10 @@ static NvnTexture *texture_intern(uint64_t b) {
         TexSlot *old = tex_tab;
         size_t old_cap = tex_cap;
         tex_cap = tex_cap ? tex_cap * 2 : 4096;
-        tex_tab = calloc(tex_cap, sizeof *tex_tab);
+        tex_tab = rt_obj_calloc(tex_cap, sizeof *tex_tab);
         for (size_t i = 0; i < old_cap; i++)
             if (old[i].t) *tex_find(&old[i].k) = old[i];
-        free(old);
+        rt_obj_free(old);
     }
     TexSlot *s = tex_find(&k);
     if (!s->t) {
@@ -688,10 +738,10 @@ NvnDescPool *g_texture_pools[64], *g_sampler_pools[64];
 RT_ON_RESET(desc_pools_reset) { memset(g_texture_pools, 0, sizeof g_texture_pools); memset(g_sampler_pools, 0, sizeof g_sampler_pools); }
 
 static NvnDescPool *desc_pool_init(uint64_t guest, uint64_t pool, uint64_t off, int count, size_t entry, NvnDescPool **reg) {
-    NvnDescPool *d = calloc(1, sizeof *d);
+    NvnDescPool *d = rt_obj_calloc(1, sizeof *d);
     d->addr = pool_addr(HOST(NvnPool, pool), off);
     d->count = count;
-    d->entries = calloc(count, entry);
+    d->entries = rt_obj_calloc(count, entry);
     SET_HOST(guest, d);
     G(uint64_t, guest, 8) = pool;
     G(uint64_t, guest, 16) = off;
@@ -746,8 +796,8 @@ NvnDescPool *nvn_find_pool(NvnDescPool **reg, uint64_t guest_pool) {
 }
 
 // ================================================================== programs
-NVN(nvnProgramInitialize) { SET_HOST(A(0), calloc(1, sizeof(NvnProgram))); RET(1); }
-NVN(nvnProgramFinalize) { free(HOST(NvnProgram, A(0))); SET_HOST(A(0), 0); }
+NVN(nvnProgramInitialize) { SET_HOST(A(0), rt_obj_calloc(1, sizeof(NvnProgram))); RET(1); }
+NVN(nvnProgramFinalize) { rt_obj_free(HOST(NvnProgram, A(0))); SET_HOST(A(0), 0); }
 NVN(nvnProgramSetDebugLabel) { (void)c; }
 NVN(nvnProgramSetSampleShading) { (void)c; }
 NVN(nvnProgramSetSubroutineLinkage) { RET(1); }
@@ -805,7 +855,7 @@ NVN(nvnWindowBuilderGetPresentInterval) { RET(G(uint32_t, A(0), 0x20)); }
 NVN(nvnWindowBuilderGetNumActiveTextures) { RET(G(uint32_t, A(0), 0x24)); }
 
 NVN(nvnWindowInitialize) {
-    NvnWindow *w = calloc(1, sizeof *w);
+    NvnWindow *w = rt_obj_calloc(1, sizeof *w);
     w->num = (int)G(uint32_t, A(1), 0x10);
     if (w->num > 8) w->num = 8;
     memcpy(w->textures, (void *)(uintptr_t)G(uint64_t, A(1), 0x18), w->num * 8);

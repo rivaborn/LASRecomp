@@ -4,6 +4,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "arena.h"
+#include "checkpoint.h"
 #include "hle.h"
 #include "kernel.h"
 #include "sched.h"
@@ -103,8 +105,15 @@ static bool kwait(int64_t timeout_ns, const struct timespec *ts) {
     uint64_t t0 = plat_now_ns();
     bool r = true;
     if (t_cur) sched_leave(t_cur);  // blocked: the core goes to the next ready thread
-    if (timeout_ns < 0) pthread_cond_wait(cv, &g_klock);
-    else r = pthread_cond_timedwait(cv, &g_klock, ts) == 0;
+    if (__builtin_expect(g_ck_park, 0) && t_cur) {  // a checkpoint: park here (as if woken; callers re-check)
+        pthread_mutex_unlock(&g_klock);
+        checkpoint_park(false);
+        pthread_mutex_lock(&g_klock);
+    } else if (timeout_ns < 0) {
+        pthread_cond_wait(cv, &g_klock);
+    } else {
+        r = pthread_cond_timedwait(cv, &g_klock, ts) == 0;
+    }
     if (t_cur) {  // back on the core first (without g_klock: the runner may need it); callers re-check their state
         pthread_mutex_unlock(&g_klock);
         sched_enter(t_cur);
@@ -187,6 +196,18 @@ static uint64_t next_thread_id = 0x50;
 // thread the same way.
 volatile int g_rt_unwind;
 static KThread *g_threads;  // every thread of this boot (g_klock)
+extern KThread *g_waitlist;
+void kernel_checkpoint_statics(void) {  // (checkpoint.c) the kernel's state outside its objects
+    rt_checkpoint_static(handles, sizeof handles);
+    rt_checkpoint_static(&g_syncwaiters, sizeof g_syncwaiters);
+    rt_checkpoint_static(&g_waitlist, sizeof g_waitlist);
+    rt_checkpoint_static(regions, sizeof regions);
+    rt_checkpoint_static(&nregions, sizeof nregions);
+    rt_checkpoint_static(&heap_size, sizeof heap_size);
+    rt_checkpoint_static(&tls_next, sizeof tls_next);
+    rt_checkpoint_static(&next_thread_id, sizeof next_thread_id);
+    rt_checkpoint_static(&g_threads, sizeof g_threads);
+}
 int kernel_thread_list(KThread **out, int max) {  // (sampler.c) the started, unfinished threads of this boot
     int n = 0;
     pthread_mutex_lock(&g_klock);
@@ -198,6 +219,15 @@ int kernel_thread_list(KThread **out, int max) {  // (sampler.c) the started, un
 
 void rt_unwind_point(void) {
     if (__builtin_expect(g_rt_unwind, 0) && t_cur) longjmp(t_cur->unwind, 1);
+    if (__builtin_expect(g_ck_park, 0) && t_cur) checkpoint_park(true);  // (runtime/checkpoint.c)
+}
+
+// (checkpoint.c) blocked threads wake and park in kwait; callers re-check their wait condition, so it's harmless
+void kernel_wake_all_waiters(void) {
+    pthread_mutex_lock(&g_klock);
+    for (KThread *t = g_threads; t; t = t->anext)
+        if (t->started && !t->finished) pthread_cond_signal(&t->cond);
+    pthread_mutex_unlock(&g_klock);
 }
 
 static void *thread_main(void *arg) {
@@ -220,7 +250,7 @@ static void *thread_main(void *arg) {
 }
 
 static KThread *thread_new(uint64_t entry, uint64_t arg, uint64_t stack_top, int prio, int core) {
-    KThread *t = calloc(1, sizeof *t);
+    KThread *t = rt_obj_calloc(1, sizeof *t);
     pthread_cond_init(&t->cond, NULL);
     t->obj.type = KOBJ_THREAD;
     t->entry = entry;
@@ -640,6 +670,7 @@ static void svc_impl(Cpu *c, uint32_t imm, uint64_t pc) {
         ns = (int64_t)((double)ns / turbo_factor());  // (guest time runs faster in turbo)
         sched_leave(t_cur);
         for (uint64_t end = plat_now_ns() + (uint64_t)ns, now; !g_rt_unwind && (now = plat_now_ns()) < end;) {
+            if (__builtin_expect(g_ck_park, 0)) checkpoint_park(false);  // (core already given up)
             uint64_t d = end - now < 50000000 ? end - now : 50000000;
             struct timespec ts = {(time_t)(d / 1000000000), (long)(d % 1000000000)};
             nanosleep(&ts, NULL);
@@ -714,7 +745,7 @@ static void svc_impl(Cpu *c, uint32_t imm, uint64_t pc) {
     }
     case 0x14: region_remove(x[1]); x[0] = R_OK; break;  // UnmapSharedMemory
     case 0x15: {  // CreateTransferMemory(_, addr, size, perm)
-        KTransferMem *t = calloc(1, sizeof *t);
+        KTransferMem *t = rt_obj_calloc(1, sizeof *t);
         t->obj.type = KOBJ_TMEM;
         t->addr = x[1];
         t->size = x[2];
@@ -822,7 +853,7 @@ static void svc_impl(Cpu *c, uint32_t imm, uint64_t pc) {
     case 0x34: x[0] = svc_wait_for_address(x[0], (uint32_t)x[1], (int32_t)x[2], (int64_t)x[3]); break;
     case 0x35: x[0] = svc_signal_to_address(x[0], (uint32_t)x[1], (int32_t)x[2], (int32_t)x[3]); break;
     case 0x45: {  // CreateEvent -> w1 writable, w2 readable
-        KObject *ev = calloc(1, sizeof *ev);
+        KObject *ev = rt_obj_calloc(1, sizeof *ev);
         ev->type = KOBJ_EVENT;
         x[0] = R_OK;
         x[1] = kernel_new_handle(ev);
@@ -873,7 +904,7 @@ void kernel_reset(void) {
     for (KThread *t = g_threads, *next; t; t = next) {
         next = t->anext;
         pthread_cond_destroy(&t->cond);
-        free(t);
+        rt_obj_free(t);
     }
     g_threads = NULL;
     g_waitlist = NULL;
@@ -899,7 +930,7 @@ void kernel_init(void) {
 }
 
 KEvent *kernel_create_event_pair(uint32_t *w, uint32_t *r) {
-    KObject *ev = calloc(1, sizeof *ev);
+    KObject *ev = rt_obj_calloc(1, sizeof *ev);
     ev->type = KOBJ_EVENT;
     *w = kernel_new_handle(ev);
     *r = kernel_new_handle(ev);
@@ -908,7 +939,7 @@ KEvent *kernel_create_event_pair(uint32_t *w, uint32_t *r) {
 }
 
 KSharedMem *kernel_create_shared_memory(uint64_t size, void (*on_map)(KSharedMem *), uint32_t *handle) {
-    KSharedMem *s = calloc(1, sizeof *s);
+    KSharedMem *s = rt_obj_calloc(1, sizeof *s);
     s->obj.type = KOBJ_SHMEM;
     s->size = size;
     s->on_map = on_map;
