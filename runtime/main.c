@@ -12,6 +12,7 @@
 #include "rando.h"
 
 const char *g_romfs_dir;
+uint64_t g_title_id = 0x01006BB00C6F0000ull;
 
 // rtld normally passes these to nn::init::Start: run every module's init/fini arrays.
 static void run_array(Cpu *c, uint64_t arr, uint64_t size) {
@@ -31,7 +32,10 @@ static void module_init(Cpu *c, Module *m) {
     else run_array(c, m->init_array, m->init_array_sz);
 }
 
-static void rtld_init_sdk(Cpu *c) { module_init(c, &g_modules[1]); }
+// The SDK side first: sdk, then the subsdks from last to first (each may use those loaded after it); main last.
+static void rtld_init_sdk(Cpu *c) {
+    for (int i = g_nmodules - 1; i >= 1; i--) module_init(c, &g_modules[i]);
+}
 static void rtld_init_main(Cpu *c) { module_init(c, &g_modules[0]); }
 
 // Claim the guest address range before anything else can map there. The host allocator places
@@ -146,6 +150,10 @@ static void boot(const char *root) {
         if (fread(meta, 1, sizeof meta, f) == sizeof meta && !memcmp(meta, "META", 4)) {
             prio = meta[0xE];
             stack_size = *(uint32_t *)(meta + 0x1C);
+            uint8_t aci[0x18];  // ACI0 (offset at 0x70): the program id at +0x10
+            if (!fseek(f, *(uint32_t *)(meta + 0x70), SEEK_SET) && fread(aci, 1, sizeof aci, f) == sizeof aci &&
+                !memcmp(aci, "ACI0", 4))
+                g_title_id = *(uint64_t *)(aci + 0x10);
         }
         fclose(f);
     }

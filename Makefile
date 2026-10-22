@@ -27,6 +27,20 @@ endif
 GENSIMD  := --simd $(if $(filter aarch64,$(ARCH)),asm,c)
 endif
 
+# GAME: which game's code is generated and built. las (Link's Awakening, the default: its patches and randomizer
+# variants) or any other name (no game patches): generated-<GAME>/, build-<GAME>/, game files in EXEFS.
+# Modules: main, every subsdk0..9 in EXEFS, sdk.
+GAME     ?= las
+ifneq ($(GAME),las)
+GEN      := generated-$(GAME)
+B        ?= build-$(GAME)
+GENGAME  := none
+else
+GENGAME  := las
+endif
+EXEFS    ?= extracted/exefs
+SUBSDKS  := $(notdir $(wildcard $(EXEFS)/subsdk[0-9]))
+
 # B: build dir. MACOS_MIN: oldest macOS to run on (default: this one). DEPS: prefix with SDL3 / FFmpeg instead of
 # Homebrew's (make deps). `make app` sets all three (build/mac15, 15.0, build/deps); plain `make` uses none.
 B         ?= build
@@ -40,7 +54,7 @@ GENFLAGS := -O1 -fno-strict-aliasing -Wno-return-type -Wno-unused-label -fvisibi
 
 # The game code (made by `make gen` from your own game files) is its own library next to the app (runtime/gamelib.h);
 # the app itself holds none of it
-GEN_SRC  := $(wildcard $(GEN)/main/*.c) $(wildcard $(GEN)/sdk/*.c)
+GEN_SRC  := $(wildcard $(GEN)/*/*.c)
 GEN_OBJ  := $(patsubst %.c,$(B)/obj/%.o,$(patsubst $(GEN)/%,%,$(GEN_SRC))) $(B)/obj/tools/gamelib_entry.o
 RT_SRC   := $(wildcard runtime/*.c) $(wildcard runtime/hle/*.c) $(wildcard runtime/services/*.c) \
             $(wildcard runtime/nvn/*.c) $(wildcard runtime/nvn/maxwell/*.c) runtime/platform/$(PLATFORM).c
@@ -123,9 +137,14 @@ $(B)/obj/%.o: $(GEN)/%.c runtime/cpu.h
 	@mkdir -p $(dir $@)
 	@$(CC) $(GENFLAGS) -c $< -o $@
 
+# Files over ~1.9 MB of C hold a few giant functions (state machines, all-label dispatch); clang's -O1 can spend hours
+# on one of them (BotW: 3 files, still running after 50 minutes). They get -O0.
+GEN_BIG  := $(patsubst %.c,$(B)/obj/%.o,$(patsubst $(GEN)/%,%,$(shell find $(GEN) -name '*.c' -size +1900k 2>/dev/null)))
+$(GEN_BIG): GENFLAGS := $(filter-out -O1,$(GENFLAGS)) -O0
+
 $(B)/obj/tools/gamelib_entry.o: tools/gamelib_entry.c $(GAMELIB_SRCS)
 	@mkdir -p $(dir $@)
-	$(CC) $(GENFLAGS) -DGAMELIB_ID='"$(GAMELIB_ID)"' -c $< -o $@
+	$(CC) $(GENFLAGS) -I$(GEN) -DGAMELIB_ID='"$(GAMELIB_ID)"' -c $< -o $@
 $(B)/rt/gamelib.o: $(GAMELIB_SRCS)
 $(B)/rt/gamelib.o: RTFLAGS += -DGAMELIB_ID='"$(GAMELIB_ID)"'
 # the start screen's build of it (runtime/gamebuild.c) uses the same flags
@@ -164,7 +183,8 @@ $(EXE): $(RT_OBJ) $(BACKEND_OBJ) $(UI_OBJ) $(IMGUI_OBJ)
 
 # its id file (<library>.id) says what it was built from without loading it (runtime/gamelib.c)
 $(GAMELIB): $(GEN_OBJ) | $(EXE)
-	$(CC) $(GAMELIB_LDFLAGS) -o $@.tmp $^
+	$(file >$@.rsp,$^)
+	$(CC) $(GAMELIB_LDFLAGS) -o $@.tmp @$@.rsp
 	mv -f $@.tmp $@
 	echo $(GAMELIB_ID) > $@.id
 
@@ -187,9 +207,15 @@ $(B)/imgui/imgui_impl_metal.o: $(IMGUI)/backends/imgui_impl_metal.mm
 # Python: tools/venv (macOS, Linux: bin/python, Windows: Scripts/python.exe)
 PY := $(firstword $(wildcard tools/venv/bin/python) $(wildcard tools/venv/Scripts/python.exe))
 
+# Module bases as in runtime/rt.h (MAIN_BASE, SDK_BASE, SUBSDK_BASE). gamelib_modules.h lists the modules for
+# tools/gamelib_entry.c.
 gen:
-	cd tools && ../$(PY) gen.py sdk ../extracted/exefs/sdk 0x7004000000 ../$(GEN)/sdk --hle ../runtime/hle/hle_symbols.txt $(GENSIMD)
-	cd tools && ../$(PY) gen.py main ../extracted/exefs/main 0x7000000000 ../$(GEN)/main $(GENSIMD)
+	cd tools && ../$(PY) gen.py sdk $(abspath $(EXEFS))/sdk 0x7004000000 ../$(GEN)/sdk --hle ../runtime/hle/hle_symbols.txt $(GENSIMD) --game $(GENGAME)
+	cd tools && ../$(PY) gen.py main $(abspath $(EXEFS))/main 0x7000000000 ../$(GEN)/main $(GENSIMD) --game $(GENGAME)
+	for m in $(SUBSDKS); do i=$${m#subsdk}; \
+	  (cd tools && ../$(PY) gen.py $$m $(abspath $(EXEFS))/$$m $$(printf '0x%x' $$((0x7008000000 + i * 0x4000000))) ../$(GEN)/$$m $(GENSIMD) --game $(GENGAME)) || exit 1; \
+	done
+	printf '#define GAMELIB_MODULES(X) X(main) %s X(sdk)\n' "$(foreach m,$(SUBSDKS),X($(m)))" > $(GEN)/gamelib_modules.h
 
 gen-objs: $(GEN_OBJ)
 

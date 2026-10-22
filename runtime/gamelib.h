@@ -24,14 +24,23 @@
 #ifndef GAMELIB_ID
 #define GAMELIB_ID "dev"
 #endif
-#define GAMELIB_ABI 1
+#define GAMELIB_ABI 2
+
+// One recompiled module (main, subsdkN, sdk).
+typedef struct {
+    const char *name;
+    const uint64_t *addrs;  // sorted guest addresses
+    const GuestFn *fns;     // the functions at them
+    const uint64_t *count;
+} GameLibModule;
+
+#define GAMELIB_MAX_MODULES 12
 
 typedef struct {
     uint32_t abi;    // GAMELIB_ABI
     const char *id;  // GAMELIB_ID
-    const uint64_t *main_addrs, *sdk_addrs;  // sorted guest addresses
-    const GuestFn *main_fns, *sdk_fns;       // the functions at them
-    const uint64_t *main_count, *sdk_count;
+    uint32_t nmods;
+    const GameLibModule *mods;
 } GameLibTables;
 
 // The library's one exported function (tools/gamelib_entry.c).

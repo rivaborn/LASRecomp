@@ -4,7 +4,7 @@
 
 #include "rt.h"
 
-Module g_modules[4];
+Module g_modules[MAX_MODULES];
 int g_nmodules;
 
 enum { DT_NULL = 0, DT_PLTRELSZ = 2, DT_HASH = 4, DT_STRTAB = 5, DT_SYMTAB = 6, DT_RELA = 7, DT_RELASZ = 8,
@@ -92,7 +92,7 @@ static void load_nso(Module *m, const char *path, uint64_t base) {
         case DT_FINI_ARRAYSZ: m->fini_array_sz = d[1]; break;
         }
     }
-    LOG("loaded %-5s at %llx size %llx syms %llu\n", m->name, base, size, m->nsyms);
+    LOG("loaded %-7s at %llx size %llx syms %llu\n", m->name, base, size, m->nsyms);
 }
 
 static Elf64Sym *sym(Module *m, uint64_t i) { return (Elf64Sym *)m->symtab + i; }
@@ -174,8 +174,21 @@ static void relocate(Module *m) {
 
 void loader_load(const char *exefs) {
     char path[1024];
-    static const struct { const char *name; uint64_t base; } mods[] = {{"main", MAIN_BASE}, {"sdk", SDK_BASE}};
-    for (unsigned i = 0; i < 2; i++) {
+    // Horizon's load order (and symbol lookup order): main, subsdk0..9 (those present), sdk
+    static char sub_names[MAX_SUBSDK][8];
+    struct { const char *name; uint64_t base; } mods[MAX_MODULES];
+    int n = 0;
+    mods[n].name = "main"; mods[n++].base = MAIN_BASE;
+    for (int i = 0; i < MAX_SUBSDK; i++) {
+        snprintf(sub_names[i], sizeof sub_names[i], "subsdk%d", i);
+        snprintf(path, sizeof path, "%s/%s", exefs, sub_names[i]);
+        FILE *f = fopen(path, "rb");
+        if (!f) continue;
+        fclose(f);
+        mods[n].name = sub_names[i]; mods[n++].base = SUBSDK_BASE(i);
+    }
+    mods[n].name = "sdk"; mods[n++].base = SDK_BASE;
+    for (int i = 0; i < n; i++) {
         Module *m = &g_modules[g_nmodules++];
         m->name = mods[i].name;
         snprintf(path, sizeof path, "%s/%s", exefs, m->name);

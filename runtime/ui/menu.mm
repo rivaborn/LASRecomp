@@ -818,6 +818,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
     bool inv = !open && inventory_overlay_wanted();
     bool trk = !open && tracker_overlay_wanted();
     bool chaos = !open && chaos_overlay_wanted();
+    if (!rt_game_is_las()) trk = chaos = inv = false;  // (the overlays read Link's Awakening's memory)
     bool kbd = g_kbd.load() == 1;
     if (!open && !kbd && !g_settings.show_fps && !inv && !trk && !chaos) {
         if (g_inited) { pthread_mutex_lock(&q_lock); q_events.clear(); pthread_mutex_unlock(&q_lock); }

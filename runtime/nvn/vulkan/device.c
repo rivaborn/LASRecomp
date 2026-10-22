@@ -539,13 +539,15 @@ void backend_present(NvnTexture *t) {
     extern void fnprof_frame(uint64_t frame);
     fnprof_frame(total_frames);
     extern void warp_frame(uint64_t frame);
-    warp_frame(total_frames);
+    if (rt_game_is_las()) warp_frame(total_frames);
     extern void reboot_test_frame(uint64_t frame);  // runtime/main.c (LARECOMP_REBOOT_AT)
     reboot_test_frame(total_frames);
     extern void save_editor_frame(uint64_t frame);
-    save_editor_frame(total_frames);
     extern void vk_level_change_check(void);
-    vk_level_change_check();
+    if (rt_game_is_las()) {  // (both read Link's Awakening's memory)
+        save_editor_frame(total_frames);
+        vk_level_change_check();
+    }
     static long shot_every = -1;
     if (shot_every < 0) { const char *e = getenv("LARECOMP_SCREENSHOT_EVERY"); shot_every = e ? atol(e) : 0; }
     extern bool g_debug_frame;

@@ -466,15 +466,24 @@ class Module:
         return out
 
 
-from patches import PATCHES
-
-import json as _json
-import os as _os
-_rv = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'rando', 'patch_variants.json')
+# Per-game instruction patches and randomizer variants, by absolute guest address: only for the game they were
+# written for (--game). Another game's code must never get them.
+PATCHES = {}
 RANDO_CODE = {}
-if _os.path.exists(_rv):
-    for _a, _ws in _json.load(open(_rv))['code'].items():
-        RANDO_CODE[int(_a, 16)] = [int(_w, 16) for _w in _ws]
+
+
+def load_game(game):
+    global PATCHES, RANDO_CODE
+    if game == 'las':
+        from patches import PATCHES as p
+        import json as _json
+        PATCHES = p
+        rv = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'rando', 'patch_variants.json')
+        if os.path.exists(rv):
+            for a, ws in _json.load(open(rv))['code'].items():
+                RANDO_CODE[int(a, 16)] = [int(w, 16) for w in ws]
+    elif game != 'none':
+        sys.exit(f'unknown --game {game} (las, none)')
 
 
 def write_if_changed(path, text):
@@ -496,6 +505,7 @@ def main():
     ap.add_argument('base', type=lambda s: int(s, 0))
     ap.add_argument('outdir')
     ap.add_argument('--hle')
+    ap.add_argument('--game', default='las', help="las: Link's Awakening patches and randomizer variants; none: plain")
     ap.add_argument('--chunk', type=int, default=1500)  # functions per file at most
     ap.add_argument('--chunk-bytes', type=int, default=1500000)  # and about this much C (even compile times)
     ap.add_argument('--big-fn', type=int, default=100000)  # bytes of C from which a function gets its own file
@@ -505,6 +515,7 @@ def main():
     args = ap.parse_args()
 
     t0 = time.time()
+    load_game(args.game)
     m = Module(args.name, args.nso, args.base, args.simd)
     starts = m.boundaries()
     hle = {}

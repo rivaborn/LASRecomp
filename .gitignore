@@ -17,3 +17,7 @@ tools/venv/
 venv/
 __pycache__/
 .DS_Store
+build-*/
+extracted-*/
+boot*.log
+build-*.log

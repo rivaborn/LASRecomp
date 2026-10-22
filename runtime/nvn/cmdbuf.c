@@ -1,6 +1,7 @@
 // NVN command buffers: commands are recorded into the guest-provided command memory as CmdRec
 // records, so the game's own memory management and out-of-memory callbacks work as designed.
 // A command handle is the guest address of a list's first record.
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -27,9 +28,7 @@ static CmdRec *raw_rec(uint64_t at, uint32_t op, uint32_t size) {
     return r;
 }
 
-NVN(nvnCommandBufferAddCommandMemory) {
-    NvnCmdBuf *cb = cb_of(A(0));
-    uint64_t mem = HOST(NvnPool, A(1))->storage + A(2), size = A(3);
+static void add_command_memory(NvnCmdBuf *cb, uint64_t mem, uint64_t size) {
     if (cb->recording && cb->mem) {
         // chain the list being recorded into the new chunk
         CmdRec *j = raw_rec(cb->mem + cb->used, CMD_JUMP, sizeof(CmdRec));
@@ -38,6 +37,14 @@ NVN(nvnCommandBufferAddCommandMemory) {
     cb->mem = mem;
     cb->size = size;
     cb->used = 0;
+}
+NVN(nvnCommandBufferAddCommandMemory) {
+    NvnCmdBuf *cb = cb_of(A(0));
+    if (!A(1)) {  // no pool: no memory yet; the first record asks the game's memory callback (BotW does this)
+        if (!cb->recording) cb->mem = cb->size = cb->used = 0;
+        return;
+    }
+    add_command_memory(cb, HOST(NvnPool, A(1))->storage + A(2), A(3));
 }
 NVN(nvnCommandBufferAddControlMemory) { (void)c; }
 NVN(nvnCommandBufferGetCommandMemorySize) { RET(cb_of(A(0))->size); }
@@ -60,7 +67,18 @@ NVN(nvnCommandBufferSetCommandMemoryCallbackEnabled) { (void)c; }
 static CmdRec *rec(Cpu *c, NvnCmdBuf *cb, uint32_t op, uint32_t extra) {
     uint32_t size = (uint32_t)((sizeof(CmdRec) + extra + 7) & ~7u);
     for (int tries = 0; !cb->mem || cb->used + size + JUMP_RESERVE > cb->size; tries++) {
-        if (!cb->callback || tries == 2) FATAL("nvn: out of command memory (need %u)\n", size);
+        if (!cb->callback || tries == 2) {
+            // A CmdRec is far bigger than real NVN's encoding of most commands, so memory the game sized for real
+            // hardware (BotW: a 0x200-byte buffer on the stack) can run out where it never would on a Switch. The
+            // runtime then chains a chunk of its own; the game never sees it.
+            static _Atomic uint64_t overflow_bytes;
+            uint64_t n = (size + JUMP_RESERVE) * 16 > 0x10000 ? (size + JUMP_RESERVE) * 16 : 0x10000;
+            uint64_t total = (overflow_bytes += n);
+            if ((total & ~0xFFFFFull) != ((total - n) & ~0xFFFFFull))
+                LOG("[nvn] command memory overflow chunks: %llu KB\n", (unsigned long long)(total >> 10));
+            add_command_memory(cb, (uint64_t)(uintptr_t)hle_alloc(n), n);
+            break;
+        }
         uint64_t saved[8];
         memcpy(saved, c->x, sizeof saved);
         c->x[0] = cb->guest;

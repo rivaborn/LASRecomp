@@ -17,6 +17,9 @@
 #define GUEST_HI     0x7320000000ull
 #define MAIN_BASE    0x7000000000ull
 #define SDK_BASE     0x7004000000ull
+// subsdk0..9 (middleware NSOs some games ship between main and sdk): 64 MB each, below the HLE range
+#define SUBSDK_BASE(i) (0x7008000000ull + (uint64_t)(i) * 0x4000000ull)
+#define MAX_SUBSDK   10
 #define HLE_BASE     0x7080000000ull   // fake addresses for host-implemented functions
 #define HLE_SIZE     0x0000100000ull
 #define TLS_BASE     0x7090000000ull
@@ -37,7 +40,8 @@ typedef struct Module {
     uint64_t symtab, strtab, nsyms;
 } Module;
 
-extern Module g_modules[4];
+#define MAX_MODULES  (2 + MAX_SUBSDK)
+extern Module g_modules[MAX_MODULES];
 extern int g_nmodules;
 void loader_load(const char *exefs_dir);  // (again after a reboot: modules are reloaded into wiped memory)
 uint64_t loader_find_symbol(const char *name);
@@ -83,3 +87,7 @@ void guest_call(Cpu *c, uint64_t addr);   // call guest function at addr (saves/
 uint64_t guest_sym(const char *name);     // cached loader_find_symbol, fatal if missing
 void *hle_alloc(uint64_t size);           // zeroed guest-visible memory (never freed)
 extern const char *g_romfs_dir;
+extern uint64_t g_title_id;
+// Link's Awakening's own features (randomizer, QoL, overlays, editors) read its memory at fixed addresses: only for it.
+#define LAS_TITLE_ID 0x01006BB00C6F0000ull
+static inline bool rt_game_is_las(void) { return g_title_id == LAS_TITLE_ID; }  // the application's program id (main.npdm ACI0; Link's Awakening's if absent)
