@@ -27,17 +27,7 @@ static bool is_dir(const char *p) {
 }
 
 void rt_remove_tree(const char *p) {  // (checkpoint.c too)
-    DIR *d = opendir(p);
-    if (!d) { unlink(p); return; }
-    struct dirent *e;
-    while ((e = readdir(d))) {
-        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
-        char c[2048];
-        snprintf(c, sizeof c, "%s/%s", p, e->d_name);
-        rt_remove_tree(c);
-    }
-    closedir(d);
-    rmdir(p);
+    plat_remove_tree(p);  // (an opendir/unlink walk left files behind on Windows: a start point got an old save)
 }
 
 static bool copy_file(const char *from, const char *to) {

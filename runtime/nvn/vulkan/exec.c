@@ -873,15 +873,32 @@ static void vk_end_pass_at(int line) {
     if (prof && line < 4096) prof_end_line[line]++;
     vkCmdEndRendering(vk_cmd());
     in_pass = false;
-    if (g_debug_frame && st.rt.ncolor && st.rt.color[0] && st.rt.color[0]->backend) {
+    // LARECOMP_DEBUG_RT=<n>: which color attachment the pass dump saves (default 0); "all": every one (_rt<n>.png)
+    static int dbg_rt = -2;
+    if (dbg_rt == -2) {
+        const char *e = getenv("LARECOMP_DEBUG_RT");
+        dbg_rt = !e ? 0 : !strcmp(e, "all") ? -1 : atoi(e);
+    }
+    int rt = dbg_rt >= 0 && dbg_rt < st.rt.ncolor && st.rt.color[dbg_rt] ? dbg_rt : 0;
+    if (g_debug_frame && st.rt.ncolor && st.rt.color[rt] && st.rt.color[rt]->backend) {
         char path[256];
         static uint64_t debug_pass_frame = ~0ull;
         static int multi = -1;
         if (multi < 0) multi = getenv("LARECOMP_DEBUG_FRAMES") != NULL;
         if (multi && renderer_present_count() != debug_pass_frame) { debug_pass_frame = renderer_present_count(); debug_pass_no = 0; }
-        if (multi) snprintf(path, sizeof path, "build/pass_%llu_%03d.png", (unsigned long long)debug_pass_frame, debug_pass_no++);
-        else snprintf(path, sizeof path, "build/pass_%03d.png", debug_pass_no++);
-        renderer_save_texture_tex(st.rt.color[0]->backend, path);
+        if (multi) snprintf(path, sizeof path, "build/pass_%llu_%03d.png", (unsigned long long)debug_pass_frame, debug_pass_no);
+        else snprintf(path, sizeof path, "build/pass_%03d.png", debug_pass_no);
+        if (dbg_rt == -1) {
+            for (int i = 0; i < st.rt.ncolor; i++) {
+                if (!st.rt.color[i] || !st.rt.color[i]->backend) continue;
+                char p2[300];
+                snprintf(p2, sizeof p2, "%.*s_rt%d.png", (int)(strlen(path) - 4), path, i);
+                renderer_save_texture_tex(st.rt.color[i]->backend, p2);
+            }
+        } else {
+            renderer_save_texture_tex(st.rt.color[rt]->backend, path);
+        }
+        debug_pass_no++;
     }
 }
 
@@ -1232,9 +1249,30 @@ static void translate_program(void *arg) {
         return;
     }
     if (!p->fi->msl) {
-        LOG("[shader] FS translate failed: %s\n", p->fi->error);
+        LOG("[shader] FS translate failed: %s (code %llx)\n", p->fi->error, (unsigned long long)p->code[1]);
         atomic_store(&p->state, 2);
         return;
+    }
+    {   // LARECOMP_DBG_GLSL=<fs code addr hex>:<GLSL statement>: inserted at the end of that fragment shader's main
+        // (debugging what a shader's draws cover or compute, e.g. "c1 = vec4(1.0);"; the Vulkan side of LARECOMP_DBG_FS)
+        static uint64_t dbg_addr;
+        static const char *dbg_stmt;
+        static int parsed;
+        if (!parsed) {
+            parsed = 1;
+            const char *e = getenv("LARECOMP_DBG_GLSL");
+            if (e && strchr(e, ':')) dbg_addr = strtoull(e, NULL, 16), dbg_stmt = strchr(e, ':') + 1;
+        }
+        if (dbg_stmt && p->code[1] == dbg_addr && !strstr(p->fi->msl, "/*dbg*/")) {
+            const char *s = p->fi->msl, *end = strrchr(s, '}');
+            char *n = end ? malloc(strlen(s) + strlen(dbg_stmt) + 16) : NULL;
+            if (n) {
+                memcpy(n, s, (size_t)(end - s));
+                sprintf(n + (end - s), "/*dbg*/ %s\n%s", dbg_stmt, end);
+                p->fi->msl = n;
+                LOG("[dbg] fs %llx: %s\n", (unsigned long long)dbg_addr, dbg_stmt);
+            }
+        }
     }
     p->vs_uses_vid = strstr(p->vi->msl, "gl_VertexIndex") != NULL;
     save_glsl(p->vi->msl, p->code[0], "vs");
@@ -2597,7 +2635,17 @@ static void draw_(CmdRec *r, bool indexed) {
     for (int i = 0; i < st.nattrib; i++) vkey.attr_kind[i] = (uint8_t)attr_kind(st.attrib[i] & 0xFF);
     for (int i = 0; i < st.rt.ncolor; i++) if (st.rt.color[i]) fkey.rt_kind[i] = (uint8_t)rt_kind(st.rt.color[i]->format);
     Prog *pr = get_program(st.program, &vkey, &fkey);
-    if (!pr || atomic_load(&pr->state) != 1) { stat_skipped++; return; }
+    if (!pr || atomic_load(&pr->state) != 1) {
+        stat_skipped++;
+        if (g_debug_frame) {  // (what isn't drawn: a program that failed to translate, or still compiling)
+            LOG("[draw] SKIPPED prog vs=%llx fs=%llx state %d | rt %d", (unsigned long long)st.program->stages[1].code_addr,
+                (unsigned long long)st.program->stages[5].code_addr, pr ? atomic_load(&pr->state) : -1, st.rt.ncolor);
+            for (int i = 0; i < st.rt.ncolor; i++)
+                if (st.rt.color[i]) LOG(" %ux%u/f%#x", st.rt.color[i]->width, st.rt.color[i]->height, st.rt.color[i]->format);
+            LOG("\n");
+        }
+        return;
+    }
     g_mirror_w = 0;
     {   // mirror mode (runtime/hle/mirror.c; as renderer.m): the scene's composite into the window image is mirrored
         extern bool mirror_draw(bool composite);
