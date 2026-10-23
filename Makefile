@@ -179,16 +179,21 @@ $(B)/game.buildid: $(EXEFS)/main
 
 # (generated code inlines cpu.h, simd.h and simd_fp.h: a change to any of them rebuilds it)
 GEN_HDRS := runtime/cpu.h runtime/simd.h runtime/simd_fp.h
+# Smaller files can stall clang's -O1 too (BotW: main_1058.c, 757 KB, over 40 minutes), so with a `timeout` command
+# every file gets GEN_O1_SECONDS at -O1 before falling back to -O0 (the big ones below get BIG_O1_SECONDS).
+GEN_O1_SECONDS ?= 600
+TIMEOUT  := $(shell command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null)
 $(B)/obj/%.o: $(GEN)/%.c $(GEN_HDRS)
 	@mkdir -p $(dir $@)
-	@$(CC) $(GENFLAGS) -c $< -o $@
+	@$(if $(TIMEOUT),"$(TIMEOUT)" $(GEN_O1_SECONDS)) $(CC) $(GENFLAGS) -c $< -o $@ || \
+	 { echo "  $<: -O1 over $(GEN_O1_SECONDS) s, built at -O0"; \
+	   $(CC) $(filter-out -O1,$(GENFLAGS)) -O0 -c $< -o $@; }
 
 # Files over ~0.9 MB of C may hold a few giant functions (state machines, all-label dispatch); clang's -O1 can spend
 # hours on one of them (BotW: 3 files, still running after 50 minutes). Most compile at -O1 in seconds, though, and
 # -O0 code runs several times slower (BotW: 301 files, 56% of the game). So they try -O1 for BIG_O1_SECONDS and
 # fall back to -O0. Without a `timeout` command they all get -O0, as before.
 BIG_O1_SECONDS ?= 120
-TIMEOUT  := $(shell command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null)
 GEN_BIG  := $(patsubst %.c,$(B)/obj/%.o,$(patsubst $(GEN)/%,%,$(shell find $(GEN) -name '*.c' -size +900k 2>/dev/null)))
 ifeq ($(TIMEOUT),)
 $(GEN_BIG): GENFLAGS := $(filter-out -O1,$(GENFLAGS)) -O0

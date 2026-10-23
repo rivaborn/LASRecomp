@@ -4,7 +4,7 @@
 //   BOTW_RECOMP_CHECKPOINT_AT=<frame>        take a checkpoint at that presented frame
 //   BOTW_RECOMP_REWIND_AT=<frame>[,<frame>]  rewind to the checkpoint at those frames (the same moment is replayed)
 //   F5 / F8 (keyboard, while playing)     take a checkpoint / rewind to it
-// Design and measurements: coding_workflow knowledge/switch-decompile-and-port/14-checkpoint-feasibility.md.
+// Design and measurements: coding_workflow knowledge/switch-decompile-and-port/14-checkpoint-and-rewind.md.
 //
 // Taking one: every guest thread parks at a safe point (rt_unwind_point: SVC entry/exit and HLE calls; kwait and
 // SleepThread for blocked threads, which are woken for it) and saves its full register context (RtlCaptureContext)
