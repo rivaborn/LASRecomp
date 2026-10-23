@@ -1223,6 +1223,14 @@ static void compile_program(void *arg) {
     p->nbinds += vk_reflect(sf, nf, p->binds + p->nbinds, MAX_BIND - p->nbinds);
     p->vs = vk_module(sv, nv);
     p->fs = vk_module(sf, nf);
+    {
+        extern void rdoc_name(VkObjectType type, uint64_t handle, const char *name);  // (vulkan/rdoc.c)
+        char nm[48];
+        snprintf(nm, sizeof nm, "vs %llx", (unsigned long long)p->code[0]);
+        rdoc_name(VK_OBJECT_TYPE_SHADER_MODULE, (uint64_t)(uintptr_t)p->vs, nm);
+        snprintf(nm, sizeof nm, "fs %llx", (unsigned long long)p->code[1]);
+        rdoc_name(VK_OBJECT_TYPE_SHADER_MODULE, (uint64_t)(uintptr_t)p->fs, nm);
+    }
     free(sv);
     free(sf);
     p->layout = make_layout(p, 2, VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT);
@@ -1253,24 +1261,35 @@ static void translate_program(void *arg) {
         atomic_store(&p->state, 2);
         return;
     }
-    {   // LARECOMP_DBG_GLSL=<fs code addr hex>:<GLSL statement>: inserted at the end of that fragment shader's main
-        // (debugging what a shader's draws cover or compute, e.g. "c1 = vec4(1.0);"; the Vulkan side of LARECOMP_DBG_FS)
-        static uint64_t dbg_addr;
-        static const char *dbg_stmt;
-        static int parsed;
-        if (!parsed) {
-            parsed = 1;
+    {   // LARECOMP_DBG_GLSL=<fs code addr hex>:<GLSL statement>[|<addr>:<statement>...]: inserted at the end of that
+        // fragment shader's main (debugging what a shader's draws cover or compute, e.g. "c1 = vec4(1.0);"; the Vulkan
+        // side of LARECOMP_DBG_FS)
+        static uint64_t dbg_addr[16];
+        static char dbg_stmt[16][256];
+        static int ndbg = -1;
+        if (ndbg < 0) {
+            ndbg = 0;
             const char *e = getenv("LARECOMP_DBG_GLSL");
-            if (e && strchr(e, ':')) dbg_addr = strtoull(e, NULL, 16), dbg_stmt = strchr(e, ':') + 1;
+            for (const char *q = e; q && *q && ndbg < 16;) {
+                const char *bar = strchr(q, '|'), *colon = strchr(q, ':');
+                size_t len = bar ? (size_t)(bar - q) : strlen(q);
+                if (colon && colon < q + len) {
+                    dbg_addr[ndbg] = strtoull(q, NULL, 16);
+                    snprintf(dbg_stmt[ndbg], sizeof dbg_stmt[ndbg], "%.*s", (int)(q + len - colon - 1), colon + 1);
+                    ndbg++;
+                }
+                q = bar ? bar + 1 : q + len;
+            }
         }
-        if (dbg_stmt && p->code[1] == dbg_addr && !strstr(p->fi->msl, "/*dbg*/")) {
+        for (int d = 0; d < ndbg; d++) {
+            if (p->code[1] != dbg_addr[d] || strstr(p->fi->msl, "/*dbg*/")) continue;
             const char *s = p->fi->msl, *end = strrchr(s, '}');
-            char *n = end ? malloc(strlen(s) + strlen(dbg_stmt) + 16) : NULL;
+            char *n = end ? malloc(strlen(s) + strlen(dbg_stmt[d]) + 16) : NULL;
             if (n) {
                 memcpy(n, s, (size_t)(end - s));
-                sprintf(n + (end - s), "/*dbg*/ %s\n%s", dbg_stmt, end);
+                sprintf(n + (end - s), "/*dbg*/ %s\n%s", dbg_stmt[d], end);
                 p->fi->msl = n;
-                LOG("[dbg] fs %llx: %s\n", (unsigned long long)dbg_addr, dbg_stmt);
+                LOG("[dbg] fs %llx: %s\n", (unsigned long long)dbg_addr[d], dbg_stmt[d]);
             }
         }
     }
@@ -1582,7 +1601,7 @@ static void build_pipeline(void *arg) {
 
 // ================================================================== feedback snapshots (renderer.m resolve_feedback)
 static NvnTexture *feedback_tex[4];
-static VkImageView feedback_view[4];
+static VkImageView feedback_view[4], feedback_aview[4];  // (the snapshot as 2D: layer 0; as an array: all layers)
 static int nfeedback;
 static uint64_t g_cur_fs_hash;
 static NvnTexture *snap_tex[8];
@@ -1640,7 +1659,9 @@ static TexBackend *snapshot_image(NvnTexture *t, TexBackend *src) {
         s->key = t;
     }
     TexBackend *d = &s->copy;
-    if (d->image && (d->width != src->width || d->height != src->height || d->format != src->format)) {
+    // (every layer: a shader may sample the target's texture as an array, BotW's 2-layer light buffer)
+    uint32_t layers = src->layers ? src->layers : 1;
+    if (d->image && (d->width != src->width || d->height != src->height || d->format != src->format || d->layers != layers)) {
         vk_views_forget(d);  // (resolution change)
         vk_defer_image(d->image, d->mem);
         d->image = VK_NULL_HANDLE;
@@ -1648,12 +1669,12 @@ static TexBackend *snapshot_image(NvnTexture *t, TexBackend *src) {
     }
     if (!d->image) {
         VkImageCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, .imageType = VK_IMAGE_TYPE_2D, .format = src->format,
-                                .extent = {src->width, src->height, 1}, .mipLevels = 1, .arrayLayers = 1,
+                                .extent = {src->width, src->height, 1}, .mipLevels = 1, .arrayLayers = layers,
                                 .samples = (VkSampleCountFlagBits)src->samples, .tiling = VK_IMAGE_TILING_OPTIMAL,
                                 .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT};
         VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
         VK_CHECK(vmaCreateImage(g_vk.vma, &ci, &ai, &d->image, &d->mem, NULL));
-        d->format = src->format; d->width = src->width; d->height = src->height; d->depth = 1; d->layers = 1; d->levels = 1;
+        d->format = src->format; d->width = src->width; d->height = src->height; d->depth = 1; d->layers = layers; d->levels = 1;
         d->samples = src->samples; d->aspect = src->aspect; d->base_type = VK_IMAGE_VIEW_TYPE_2D;
         vk_image_init_layout(vk_cmd(), d->image, d->aspect);
     }
@@ -1889,8 +1910,10 @@ static void resolve_feedback(Prog *pr) {
             for (int k = 0; k < nsnaps; k++) if (snaps[k].key == t && snaps[k].copy.image) existing = &snaps[k];
             VkImageAspectFlags sa = src->aspect & VK_IMAGE_ASPECT_DEPTH_BIT ? VK_IMAGE_ASPECT_DEPTH_BIT : src->aspect;
             static const VkComponentMapping id = {0};
-            if (!nosnap && si >= 0 && (snap_ok[si] || self_write) && existing) {
+            if (!nosnap && si >= 0 && (snap_ok[si] || self_write) && existing && existing->copy.layers == (src->layers ? src->layers : 1)) {
                 feedback_tex[nfeedback] = t;
+                feedback_aview[nfeedback] = vk_image_view(&existing->copy, VK_IMAGE_VIEW_TYPE_2D_ARRAY, src->format, 0, 1, 0,
+                                                          existing->copy.layers, id, sa);
                 feedback_view[nfeedback++] = vk_image_view(&existing->copy, VK_IMAGE_VIEW_TYPE_2D, src->format, 0, 1, 0, 1, id, sa);
                 continue;
             }
@@ -1901,7 +1924,7 @@ static void resolve_feedback(Prog *pr) {
             VkCommandBuffer cb = vk_cmd();
             vk_full_barrier(cb);
             gp_mark(cb, "feedback snapshot %ux%u fmt %d", src->width, src->height, src->format);
-            VkImageCopy rg = {.srcSubresource = {src->aspect, 0, 0, 1}, .dstSubresource = {src->aspect, 0, 0, 1},
+            VkImageCopy rg = {.srcSubresource = {src->aspect, 0, 0, dst->layers}, .dstSubresource = {src->aspect, 0, 0, dst->layers},
                               .extent = {src->width, src->height, 1}};
             vkCmdCopyImage(cb, src->image, VK_IMAGE_LAYOUT_GENERAL, dst->image, VK_IMAGE_LAYOUT_GENERAL, 1, &rg);
             if (g_debug_frame && (src->aspect & VK_IMAGE_ASPECT_DEPTH_BIT)) {
@@ -1914,6 +1937,7 @@ static void resolve_feedback(Prog *pr) {
                 cb = vk_cmd();
             }
             feedback_tex[nfeedback] = t;
+            feedback_aview[nfeedback] = vk_image_view(dst, VK_IMAGE_VIEW_TYPE_2D_ARRAY, src->format, 0, 1, 0, dst->layers, id, sa);
             feedback_view[nfeedback++] = vk_image_view(dst, VK_IMAGE_VIEW_TYPE_2D, src->format, 0, 1, 0, 1, id, sa);
             if (si < 0) { static int rr; si = rr++ & 7; snap_tex[si] = t; }
             snap_ok[si] = true;
@@ -2404,8 +2428,9 @@ static void texture_info(int stage, ShaderInfo *si, int i, VkDescriptorImageInfo
             wh[0] = e->tex->width; wh[1] = e->tex->height;
             for (int k = 0; k < nfeedback; k++)
                 if (e->tex == feedback_tex[k] && (st_->type == TEXTYPE_2D || st_->type == TEXTYPE_2D_ARRAY)) {
-                    view = feedback_view[k];
-                    if (st_->type == TEXTYPE_2D_ARRAY) view = vk_dummy_view(TEXTYPE_2D_ARRAY);  // (2D snapshot as array: rare)
+                    // (sampled as an array: BotW's 2-layer light buffer, read while a layer of it is a target; the
+                    // placeholder this used to get read 0 and Link was lit black in the Shrine of Resurrection)
+                    view = st_->type == TEXTYPE_2D_ARRAY ? feedback_aview[k] : feedback_view[k];
                 }
         }
     }
@@ -3097,7 +3122,14 @@ static void debug_draw(Prog *pr, CmdRec *r, bool indexed) {
     LOG(" | vp %.0f %.0f %.0f %.0f | attrs %#x blend %#x ds %02x%02x%02x poly %02x%02x chmask %08x\n", st.viewport[0][0], st.viewport[0][1],
         st.viewport[0][2], st.viewport[0][3], pr->vi->attr_mask, st.color_state[0], st.ds[0], st.ds[1], st.ds[2], st.poly[0], st.poly[1],
         st.channel_mask);
-    if (getenv("LARECOMP_DEBUG_DATA")) {  // vertex streams 0-1 and fragment cbufs: the first floats
+    if (getenv("LARECOMP_DEBUG_DATA")) {  // vertex streams 0-1, vertex and fragment cbufs: the first floats
+        for (int c = 0; c < 18; c++) {
+            if (!((pr->vi->cbuf_mask >> c) & 1) || !st.ubuf[0][c].addr) continue;
+            const float *u = (const float *)(uintptr_t)st.ubuf[0][c].addr;
+            LOG("[draw]   vcb%d %llx size %u:", c, (unsigned long long)st.ubuf[0][c].addr, (unsigned)st.ubuf[0][c].size);
+            for (int k = 0; k < 32 && k * 4 < (int)st.ubuf[0][c].size; k++) LOG(" %.6g", u[k]);
+            LOG("\n");
+        }
         for (int s = 0; s < 2; s++) {
             if (!st.vbuf[s].addr) continue;
             const float *v = (const float *)(uintptr_t)st.vbuf[s].addr;

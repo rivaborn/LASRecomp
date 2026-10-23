@@ -37,7 +37,9 @@ static void create_instance(void) {
     uint32_t n_ext = 0;
     for (Uint32 i = 0; i < n_sdl && n_ext < 14; i++) ext[n_ext++] = sdl_ext[i];
     bool validate = getenv("LARECOMP_VK_VALIDATION") != NULL;
-    if (validate) ext[n_ext++] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
+    // (debug utils also for RenderDoc captures: rdoc.c names the shader modules after their guest programs)
+    bool names = getenv("LARECOMP_RDOC_CAPTURE") != NULL;
+    if (validate || names) ext[n_ext++] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
     const char *layers[] = {"VK_LAYER_KHRONOS_validation"};
     VkApplicationInfo app = {.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO, .pApplicationName = "LARecomp",
                              .pEngineName = "LARecomp", .apiVersion = VK_API_VERSION_1_3};
@@ -45,8 +47,8 @@ static void create_instance(void) {
                                .enabledExtensionCount = n_ext, .ppEnabledExtensionNames = ext,
                                .enabledLayerCount = validate ? 1 : 0, .ppEnabledLayerNames = layers};
     VkResult r = vkCreateInstance(&ci, NULL, &g_vk.inst);
-    if (r != VK_SUCCESS && validate) {
-        LOG("[vk] validation layer unavailable (%d); continuing without\n", r);
+    if (r != VK_SUCCESS && (validate || names)) {
+        LOG("[vk] validation layer / debug utils unavailable (%d); continuing without\n", r);
         ci.enabledLayerCount = 0;
         ci.enabledExtensionCount--;
         validate = false;
@@ -545,6 +547,8 @@ void backend_present(NvnTexture *t) {
     reboot_test_frame(total_frames);
     extern void checkpoint_frame(uint64_t frame);  // (runtime/checkpoint.c; LARECOMP_CHECKPOINT only)
     checkpoint_frame(total_frames);
+    extern void rdoc_frame(uint64_t frame);  // (vulkan/rdoc.c; LARECOMP_RDOC_CAPTURE under RenderDoc)
+    rdoc_frame(total_frames);
     extern void save_editor_frame(uint64_t frame);
     extern void vk_level_change_check(void);
     if (rt_game_is_las()) {  // (both read Link's Awakening's memory)

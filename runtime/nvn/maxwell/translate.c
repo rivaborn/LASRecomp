@@ -67,6 +67,8 @@ typedef struct {
     bool uses_rscale;  // resolution-scale table (fragment/compute only)
     uint32_t flat_mask;           // fragment inputs using constant (flat) interpolation
     uint32_t noperspective_mask;  // fragment inputs using pass (linear) interpolation
+    uint8_t imap[32];             // fragment: the SPH's input map per generic vector, 2 bits per component (0 unused,
+                                  // 1 constant, 2 perspective, 3 screen-linear)
     uint32_t omap_target, omap_depth;
     int tex_slot[8192];           // texture index -> Metal slot + 1
     bool tex_weak[64];            // slot type only guessed (from a size query): the next sample decides
@@ -272,10 +274,15 @@ static void attr_load(Ctx *c, int dst, uint32_t addr, const char *idx) {
                 // IPA "pass" yields attr/w (the shader multiplies by w itself); Metal gives attr. "multiply" is the
                 // pass value times a register - usually w (from the pass of position w: Metal's attr again), but a
                 // shader may pass its own (the Mysterious Woods mist: 1/(v4.w * pos.w), a projective screen lookup)
-                if (c->ipa_mode == 0) sprintf(e, "as_type<uint>(in.v%d[%d] * in.pos.w)", a, comp);
+                // (only perspective inputs carry the 1/w: constant and screen-linear ones are read as they are)
+                // (per component, as Eden's IPA: a vector can mix them)
+                const int im = c->stage == STAGE_FRAGMENT && a < 32 ? (c->imap[a] >> (2 * comp)) & 3 : 0;
+                const bool persp = im == 0 || im == 2;
+                if (c->ipa_mode == 0 && persp) sprintf(e, "as_type<uint>(in.v%d[%d] * in.pos.w)", a, comp);
                 else if (c->ipa_mode == 1 && c->ipa_mul != RZ) {
                     char mb[16];
-                    sprintf(e, "as_type<uint>(in.v%d[%d] * in.pos.w * as_type<float>(%s))", a, comp, reg(c, c->ipa_mul, mb));
+                    if (persp) sprintf(e, "as_type<uint>(in.v%d[%d] * in.pos.w * as_type<float>(%s))", a, comp, reg(c, c->ipa_mul, mb));
+                    else sprintf(e, "as_type<uint>(in.v%d[%d] * as_type<float>(%s))", a, comp, reg(c, c->ipa_mul, mb));
                 } else sprintf(e, "as_type<uint>(in.v%d[%d])", a, comp);
             }
         } else if (addr == 0x3FC) { c->uses_front_facing = true; strcpy(e, "(front_facing ? 0xFFFFFFFFu : 0u)"); }
@@ -2362,6 +2369,17 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
     if (stage == STAGE_FRAGMENT) {
         c->omap_target = *(const uint32_t *)(sph + 0x48);
         c->omap_depth = (*(const uint32_t *)(sph + 0x4C) >> 1) & 1;
+        // ImapGenericVector[32] at SPH 0x18: 2 bits per component. The vector's interpolation is its first used
+        // component's (constant: flat, screen-linear: noperspective; Eden's translate_program.cpp), but IPA
+        // multiplies by w only the perspective components, each by its own mode (Eden's IPA).
+        for (int i = 0; i < 32; i++) {
+            uint8_t v = sph[0x18 + i];
+            int mode = 0;
+            for (int k = 0; k < 4 && !mode; k++) mode = (v >> (2 * k)) & 3;
+            c->imap[i] = v;
+            if (mode == 1) c->flat_mask |= 1u << i;
+            if (mode == 3) c->noperspective_mask |= 1u << i;
+        }
     }
     // find the end: the last EXIT followed by self-branch padding, or max_size
     size_t n = (max_size - (code - blob)) / 8;
