@@ -16,14 +16,21 @@ uint32_t tegra_default_block_height_log2(uint32_t height_in_blocks) {
 
 static uint32_t block_depth_for(uint32_t depth) {
     uint32_t log2 = 0;
-    while ((1u << log2) < depth && log2 < 5) log2++;
+    while ((1u << log2) < depth && log2 < 4) log2++;
     return log2;
 }
 
+// The NVN driver's default: a block holds at most 16 GOBs. Block depth first (up to 16 slices), then the block
+// height takes what is left. Checked against the descriptors BotW's driver wrote (Eden, EDEN_LOG_TIC): 3D
+// textures 256x32x16, 32x32x32 and 8x8x8 all have block height 1 GOB and block depth min(depth, 16); this code had
+// 4 GOBs and 32 slices, so their slices were read scrambled (BotW's sky-light table: Link's skin lit wrong).
+// 2D textures the driver creates round the height up (200x112: 16 GOBs); packaged (BNTX) textures carry their
+// own block height, which the asset tool rounds down (objects.c applies it).
 void tegra_layout_init(TexLayout *t) {
     uint32_t hb = div_up(t->height, t->fmt->bh);
-    t->block_height_log2 = tegra_default_block_height_log2(hb);
     t->block_depth_log2 = t->depth > 1 ? block_depth_for(t->depth) : 0;
+    t->block_height_log2 = tegra_default_block_height_log2(hb);
+    if (t->block_height_log2 + t->block_depth_log2 > 4) t->block_height_log2 = 4 - t->block_depth_log2;
 }
 
 // Block height shrinks with the level so a block never exceeds the level height.
