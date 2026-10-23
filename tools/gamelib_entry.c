@@ -1,3 +1,4 @@
+// Based on LAS Recomp by Peiikai (MIT); modified for BotW Recomp.
 // Entry of the game code library (runtime/gamelib.h), compiled into it with the generated code: the function
 // tables, found by name when the app loads the library. Everything else in it stays hidden.
 #include "gamelib.h"
@@ -15,7 +16,7 @@ GAMELIB_MODULES(DECLARE)
 #define ENTRY(n) {#n, n##_fn_addrs, n##_fn_ptrs, &n##_fn_count},
 static const GameLibModule mods[] = {GAMELIB_MODULES(ENTRY)};
 
-GAMELIB_EXPORT const GameLibTables *lasgame_tables(void) {
+GAMELIB_EXPORT const GameLibTables *gamelib_tables(void) {
     static const GameLibTables t = {GAMELIB_ABI, GAMELIB_ID, sizeof mods / sizeof mods[0], mods};
     return &t;
 }

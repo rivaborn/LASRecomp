@@ -1,3 +1,4 @@
+// Based on LAS Recomp by Peiikai (MIT); modified for BotW Recomp.
 // The recompiled game code: a library built from the player's own game files (`make gen` + `make` in a source
 // checkout, the start screen's setup otherwise; runtime/gamebuild.c) and loaded at startup (runtime/gamelib.c).
 // Nothing from the game ships with the app.
@@ -7,15 +8,16 @@
 #include <stdint.h>
 
 #include "cpu.h"
+#include "product.h"
 
 #if defined(_WIN32)
-#define GAMELIB_NAME "lasgame.dll"
+#define GAMELIB_NAME PRODUCT_GAMELIB ".dll"
 #define GAMELIB_EXPORT __declspec(dllexport)
 #elif defined(__APPLE__)
-#define GAMELIB_NAME "lasgame.dylib"
+#define GAMELIB_NAME PRODUCT_GAMELIB ".dylib"
 #define GAMELIB_EXPORT __attribute__((visibility("default")))
 #else
-#define GAMELIB_NAME "lasgame.so"
+#define GAMELIB_NAME PRODUCT_GAMELIB ".so"
 #define GAMELIB_EXPORT __attribute__((visibility("default")))
 #endif
 
@@ -45,7 +47,7 @@ typedef struct {
 
 // The library's one exported function (tools/gamelib_entry.c).
 typedef const GameLibTables *(*GameLibEntry)(void);
-#define GAMELIB_ENTRY "lasgame_tables"
+#define GAMELIB_ENTRY "gamelib_tables"
 
 #ifdef __cplusplus
 extern "C" {

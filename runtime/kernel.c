@@ -1,3 +1,4 @@
+// Based on LAS Recomp by Peiikai (MIT); modified for BotW Recomp.
 // A small Horizon kernel: handles, threads, synchronization, memory, and the SVC dispatcher.
 #include <stdlib.h>
 #include <string.h>
@@ -234,7 +235,7 @@ static void *thread_main(void *arg) {
     KThread *t = arg;
     t_cur = t;
     crash_handler_install();
-    { extern void plat_watch_thread(void); plat_watch_thread(); }  // (LARECOMP_WATCH: debugging)
+    { extern void plat_watch_thread(void); plat_watch_thread(); }  // (BOTW_RECOMP_WATCH: debugging)
     rt_set_fpcr(0);
     if (!setjmp(t->unwind)) {
         sched_enter(t);  // a new thread starts when its core is its (sched.c)

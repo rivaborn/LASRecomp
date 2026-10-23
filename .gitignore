@@ -1,3 +1,4 @@
+# Based on LAS Recomp by Peiikai (MIT); modified for BotW Recomp.
 # your own game files and what's made from them (building from source puts them here)
 input/
 extracted/
@@ -12,6 +13,7 @@ build/
 /cache/
 save/
 /larecomp.ini
+/botw_recomp.ini
 # tools and Python environments (machine-specific)
 tools/venv/
 venv/

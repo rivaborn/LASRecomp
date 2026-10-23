@@ -1,3 +1,4 @@
+// Based on LAS Recomp by Peiikai (MIT); modified for BotW Recomp.
 // Fuzz test for the Maxwell shader translator (runtime/nvn/maxwell/translate.c).
 //
 //  1. MSL must not change: every program is translated by the current translate.c (key.glsl = 0) and by the

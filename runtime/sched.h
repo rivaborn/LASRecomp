@@ -1,3 +1,4 @@
+// New in BotW Recomp (based on LAS Recomp by Peiikai, MIT).
 // Per-core priority scheduling of guest threads (runtime/sched.c).
 #pragma once
 #include <stdbool.h>

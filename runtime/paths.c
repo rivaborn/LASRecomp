@@ -1,3 +1,4 @@
+// Based on LAS Recomp by Peiikai (MIT); modified for BotW Recomp.
 // Data root and shipped resources (runtime/paths.h).
 #include <SDL3/SDL.h>
 #include <dirent.h>
@@ -15,6 +16,7 @@
 #include "gamelib.h"
 #include "paths.h"
 #include "platform.h"
+#include "product.h"
 
 static char g_root[1024], g_start[1024], g_exe_dir[1024];
 
@@ -71,7 +73,7 @@ static bool writable(const char *dir) {
 
 static void fail(const char *msg) {
     fprintf(stderr, "%s\n", msg);
-    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "LAS Recomp", msg, NULL);
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, PRODUCT_NAME, msg, NULL);
     exit(1);
 }
 
@@ -93,10 +95,10 @@ void rt_paths_init(void) {
 #ifdef _WIN32
         snprintf(root, sizeof root, "%s", g_exe_dir);
 #elif defined(__linux__)
-        // (the AppImage is read-only): $XDG_DATA_HOME/lasrecomp, ~/.local/share/lasrecomp by default
+        // (the AppImage is read-only): $XDG_DATA_HOME/<PRODUCT_EXE>, ~/.local/share/<PRODUCT_EXE> by default
         const char *xdg = getenv("XDG_DATA_HOME"), *home = getenv("HOME");
-        if (xdg && *xdg == '/') snprintf(root, sizeof root, "%s/lasrecomp", xdg);
-        else snprintf(root, sizeof root, "%s/.local/share/lasrecomp", home && *home ? home : "/tmp");
+        if (xdg && *xdg == '/') snprintf(root, sizeof root, "%s/" PRODUCT_EXE, xdg);
+        else snprintf(root, sizeof root, "%s/.local/share/" PRODUCT_EXE, home && *home ? home : "/tmp");
 #else
         const char *home = getenv("HOME");
         snprintf(root, sizeof root, "%s/Library/Application Support/" RT_BUNDLE_ID, home && *home ? home : "/tmp");
@@ -106,11 +108,11 @@ void rt_paths_init(void) {
     char msg[1400];
     if (!is_dir(root) || !writable(root) || chdir(root) != 0) {
 #ifdef _WIN32
-        snprintf(msg, sizeof msg, "LAS Recomp can't write to its folder:\n%s\n\nIt keeps game files, saves and seeds "
-                 "next to the program. Move the \"LAS Recomp\" folder somewhere you can write to (e.g. Documents or "
+        snprintf(msg, sizeof msg, PRODUCT_NAME " can't write to its folder:\n%s\n\nIt keeps game files, saves and seeds "
+                 "next to the program. Move the \"" PRODUCT_NAME "\" folder somewhere you can write to (e.g. Documents or "
                  "Desktop, not Program Files) and start it again.", root);
 #else
-        snprintf(msg, sizeof msg, "LAS Recomp can't write to its data folder:\n%s", root);
+        snprintf(msg, sizeof msg, PRODUCT_NAME " can't write to its data folder:\n%s", root);
 #endif
         fail(msg);
     }
@@ -128,7 +130,7 @@ bool rt_resource(const char *name, const char *dev_rel, char *out, size_t n) {
     }
     if (dev_rel) {
         snprintf(c[2], sizeof c[2], "%s" SEP "%s", g_start, dev_rel);
-        snprintf(c[3], sizeof c[3], "%s" SEP ".." SEP "%s", g_exe_dir, dev_rel);  // build/lasrecomp -> repo root
+        snprintf(c[3], sizeof c[3], "%s" SEP ".." SEP "%s", g_exe_dir, dev_rel);  // build/<PRODUCT_EXE> -> repo root
     }
     for (int i = 0; i < 4; i++)
         if (c[i][0] && exists(c[i])) return (size_t)snprintf(out, n, "%s", c[i]) < n;  // (as is: a venv python must stay a link)

@@ -1,3 +1,4 @@
+// New in BotW Recomp (based on LAS Recomp by Peiikai, MIT).
 // nfp:user (amiibo): a reader that is never present. nn::nfp::Initialize needs a real IUser object (the logging stub
 // returns none, and the SDK then dereferences null); the game gets an initialized interface with no devices, so
 // amiibo features just find nothing to scan. Command ids from switchbrew (NFC services, IUser).

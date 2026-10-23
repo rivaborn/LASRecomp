@@ -1,3 +1,4 @@
+// New in BotW Recomp (based on LAS Recomp by Peiikai, MIT).
 // Guard-page allocator for host memory errors (build with GUARD_ALLOC=1; Windows). Every malloc / calloc / realloc
 // / free of the runtime's own code (linked with --wrap) gets its own pages: the block ends right at an inaccessible
 // page, so writing past it faults at the guilty instruction (the crash report names it), and a freed block's pages
@@ -18,7 +19,7 @@ static void *(*real_malloc)(size_t);
 static void *(*real_calloc)(size_t, size_t);
 static void *(*real_realloc)(void *, size_t);
 static void (*real_free)(void *);
-static size_t guard_min;  // LARECOMP_GUARD_MIN: smaller blocks go to the CRT (default 1024: few, large buffers)
+static size_t guard_min;  // BOTW_RECOMP_GUARD_MIN: smaller blocks go to the CRT (default 1024: few, large buffers)
 
 static void real_init(void) {
     if (real_free) return;
@@ -28,7 +29,7 @@ static void real_init(void) {
     real_calloc = (void *(*)(size_t, size_t))(void *)GetProcAddress(m, "calloc");
     real_realloc = (void *(*)(void *, size_t))(void *)GetProcAddress(m, "realloc");
     char e[32];
-    guard_min = GetEnvironmentVariableA("LARECOMP_GUARD_MIN", e, sizeof e) ? (size_t)strtoull(e, NULL, 0) : 1024;
+    guard_min = GetEnvironmentVariableA("BOTW_RECOMP_GUARD_MIN", e, sizeof e) ? (size_t)strtoull(e, NULL, 0) : 1024;
     real_free = (void (*)(void *))(void *)GetProcAddress(m, "free");
 }
 
@@ -89,7 +90,7 @@ void *__wrap_realloc(void *p, size_t n) {
 }
 #endif
 
-// Heap checkpoints (LARECOMP_HEAPCHECK=1, Windows): rt_heap_check(where) validates the CRT heap; the first failing
+// Heap checkpoints (BOTW_RECOMP_HEAPCHECK=1, Windows): rt_heap_check(where) validates the CRT heap; the first failing
 // checkpoint is reported with the last one that passed, which brackets the code that corrupted it.
 #ifdef _WIN32
 #include <malloc.h>
@@ -100,7 +101,7 @@ void rt_fatal_trace(void) __attribute__((noreturn));
 void rt_heap_check(const char *where) {
     static int on = -1;
     static const char *volatile last_ok = "start";
-    if (on < 0) on = getenv("LARECOMP_HEAPCHECK") != NULL;
+    if (on < 0) on = getenv("BOTW_RECOMP_HEAPCHECK") != NULL;
     if (!on) return;
     if (HeapValidate((HANDLE)_get_heap_handle(), 0, NULL)) {
         last_ok = where;

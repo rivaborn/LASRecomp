@@ -1,3 +1,4 @@
+// Based on LAS Recomp by Peiikai (MIT); modified for BotW Recomp.
 // Loads the recompiled game code library (runtime/gamelib.h).
 #include "gamelib.h"
 

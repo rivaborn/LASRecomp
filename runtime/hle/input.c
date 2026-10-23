@@ -1,3 +1,4 @@
+// Based on LAS Recomp by Peiikai (MIT); modified for BotW Recomp.
 // Controller input: SDL keyboard/gamepad -> nn::hid Npad state.
 //
 // Both go through the player's bindings (runtime/hle/bindings.c, defaults there: keyboard WASD left stick, arrows
@@ -183,7 +184,7 @@ void input_handle_event(const SDL_Event *e) {
         if (e->type == SDL_EVENT_KEY_DOWN && e->key.scancode == SDL_SCANCODE_F9 && !e->key.repeat) g_debug_frame_request = 1;
         if (e->type == SDL_EVENT_KEY_DOWN && !e->key.repeat &&
             (e->key.scancode == SDL_SCANCODE_F5 || e->key.scancode == SDL_SCANCODE_F8)) {  // checkpoint / rewind
-            extern void checkpoint_key(int which);  // (runtime/checkpoint.c; LARECOMP_CHECKPOINT only)
+            extern void checkpoint_key(int which);  // (runtime/checkpoint.c; BOTW_RECOMP_CHECKPOINT only)
             checkpoint_key(e->key.scancode == SDL_SCANCODE_F5 ? 1 : 2);
         }
         if (e->key.scancode < SDL_SCANCODE_COUNT) keys_down[e->key.scancode] = e->type == SDL_EVENT_KEY_DOWN;
@@ -215,7 +216,7 @@ static _Atomic int32_t script_lx, script_ly, script_rx, script_ry;
 
 // Tests of the bindings, through them like a real player:
 // LARECOMP_HOST_INPUT="frame:key:<SDL key name>:frames,frame:pad:<button>:frames,..." holds a host key / controller
-//   button (names as in larecomp.ini's bind_* lines: "Z", "Keypad 0", "south", "ltrigger"...);
+//   button (names as in the settings file's bind_* lines: "Z", "Keypad 0", "south", "ltrigger"...);
 //   "frame:lstick:<x>/<y>:frames" holds the controller's left stick there (raw SDL units, y up: a drifting stick).
 // "frame:type:<text>" types <text> as real key events (down, text, up per character), through the overlay menu / name
 //   entry first like a player's typing; "{Escape}" (any SDL key name) presses that key. No ',' or ':' in <text>.

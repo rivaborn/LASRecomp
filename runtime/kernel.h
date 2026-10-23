@@ -1,3 +1,4 @@
+// Based on LAS Recomp by Peiikai (MIT); modified for BotW Recomp.
 // Kernel object types shared by kernel.c and the IPC/service layer.
 #pragma once
 #include <setjmp.h>

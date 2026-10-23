@@ -1,5 +1,6 @@
-// LARECOMP_RDOC_CAPTURE=<frame>[,<frame>...]: RenderDoc captures those presented frames. Run the game under RenderDoc
-// (renderdoccmd capture -c <file template> lasrecomp.exe ...): the in-app API is then loaded with the process, and
+// New in BotW Recomp (based on LAS Recomp by Peiikai, MIT).
+// BOTW_RECOMP_RDOC_CAPTURE=<frame>[,<frame>...]: RenderDoc captures those presented frames. Run the game under RenderDoc
+// (renderdoccmd capture -c <file template> botw_recomp.exe ...): the in-app API is then loaded with the process, and
 // TriggerCapture, called the frame before, captures the next one. Without RenderDoc this does nothing.
 #include <stdbool.h>
 #include <stdint.h>
@@ -14,14 +15,14 @@
 #include "../../rt.h"
 #include "vk.h"
 
-// Names a Vulkan object for the capture (with LARECOMP_RDOC_CAPTURE: device.c enables VK_EXT_debug_utils), so
+// Names a Vulkan object for the capture (with BOTW_RECOMP_RDOC_CAPTURE: device.c enables VK_EXT_debug_utils), so
 // RenderDoc shows e.g. the guest program address on each shader module.
 void rdoc_name(VkObjectType type, uint64_t handle, const char *name) {
     static int init;
     static PFN_vkSetDebugUtilsObjectNameEXT set;
     if (!init) {
         init = 1;
-        if (getenv("LARECOMP_RDOC_CAPTURE"))
+        if (getenv("BOTW_RECOMP_RDOC_CAPTURE"))
             set = (PFN_vkSetDebugUtilsObjectNameEXT)vkGetInstanceProcAddr(g_vk.inst, "vkSetDebugUtilsObjectNameEXT");
     }
     if (!set || !handle) return;
@@ -37,7 +38,7 @@ void rdoc_frame(uint64_t frame) {
     static char frames[256];
     if (!init) {
         init = 1;
-        const char *e = getenv("LARECOMP_RDOC_CAPTURE");
+        const char *e = getenv("BOTW_RECOMP_RDOC_CAPTURE");
         if (!e) return;
         snprintf(frames, sizeof frames, "%s", e);
         HMODULE m = GetModuleHandleA("renderdoc.dll");

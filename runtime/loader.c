@@ -1,3 +1,4 @@
+// Based on LAS Recomp by Peiikai (MIT); modified for BotW Recomp.
 // NSO loading, relocation, and symbol resolution.
 #include <stdlib.h>
 #include <string.h>

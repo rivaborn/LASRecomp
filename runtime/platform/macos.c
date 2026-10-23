@@ -1,3 +1,4 @@
+// Based on LAS Recomp by Peiikai (MIT); modified for BotW Recomp.
 // macOS host layer (runtime/platform.h).
 #include <crt_externs.h>
 #include <dlfcn.h>

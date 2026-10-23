@@ -1,3 +1,4 @@
+// Based on LAS Recomp by Peiikai (MIT); modified for BotW Recomp.
 // nn::vi (display/layer) and nv:: (graphics driver init), implemented on the host.
 #include <stdlib.h>
 #include <time.h>

@@ -1,3 +1,4 @@
+// Based on LAS Recomp by Peiikai (MIT); modified for BotW Recomp.
 // Builds the game code library on the player's machine (runtime/gamebuild.h).
 #include "gamebuild.h"
 
@@ -12,6 +13,7 @@
 #include "paths.h"
 #include "platform.h"
 #include "rt.h"
+#include "product.h"
 
 // From the Makefile: the flags the game code is compiled and linked with (as `make` builds it in a source checkout)
 #ifndef GAMELIB_CFLAGS
@@ -140,7 +142,7 @@ static bool find_tools(Tools *t) {
     if (b > s) s = b;
     if (s) *s = 0;
 #ifdef _WIN32
-    if (!rt_resource("lasrecomp.dll.a", "build/lasrecomp.dll.a", t->implib, sizeof t->implib)) return false;
+    if (!rt_resource(PRODUCT_EXE ".dll.a", "build/" PRODUCT_EXE ".dll.a", t->implib, sizeof t->implib)) return false;
     t->zig_rt[0] = 0;
     if (t->zig && rt_resource("zig" SEP "rt" SEP "link.rsp", NULL, t->zig_rt, sizeof t->zig_rt)) {
         char *s = strrchr(t->zig_rt, '/'), *b = strrchr(t->zig_rt, '\\');
@@ -274,7 +276,7 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
     if (!registered) registered = true, atexit(end_all);
     Tools t;
     if (!find_tools(&t)) {
-        snprintf(why, why_size, "the game code builder is missing from this copy of LAS Recomp");
+        snprintf(why, why_size, "the game code builder is missing from this copy of " PRODUCT_NAME);
         return false;
     }
     char work[1100], lib[1100], tmp[1100];

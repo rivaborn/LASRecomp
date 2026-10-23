@@ -1,3 +1,4 @@
+// Based on LAS Recomp by Peiikai (MIT); modified for BotW Recomp.
 // Executes recorded NVN command lists with Vulkan (port of renderer.m; same structure, same behaviour).
 #include <SDL3/SDL_cpuinfo.h>
 #include <SDL3/SDL_timer.h>
@@ -873,10 +874,10 @@ static void vk_end_pass_at(int line) {
     if (prof && line < 4096) prof_end_line[line]++;
     vkCmdEndRendering(vk_cmd());
     in_pass = false;
-    // LARECOMP_DEBUG_RT=<n>: which color attachment the pass dump saves (default 0); "all": every one (_rt<n>.png)
+    // BOTW_RECOMP_DEBUG_RT=<n>: which color attachment the pass dump saves (default 0); "all": every one (_rt<n>.png)
     static int dbg_rt = -2;
     if (dbg_rt == -2) {
-        const char *e = getenv("LARECOMP_DEBUG_RT");
+        const char *e = getenv("BOTW_RECOMP_DEBUG_RT");
         dbg_rt = !e ? 0 : !strcmp(e, "all") ? -1 : atoi(e);
     }
     int rt = dbg_rt >= 0 && dbg_rt < st.rt.ncolor && st.rt.color[dbg_rt] ? dbg_rt : 0;
@@ -1261,7 +1262,7 @@ static void translate_program(void *arg) {
         atomic_store(&p->state, 2);
         return;
     }
-    {   // LARECOMP_DBG_GLSL=<fs code addr hex>:<GLSL statement>[|<addr>:<statement>...]: inserted at the end of that
+    {   // BOTW_RECOMP_DBG_GLSL=<fs code addr hex>:<GLSL statement>[|<addr>:<statement>...]: inserted at the end of that
         // fragment shader's main (debugging what a shader's draws cover or compute, e.g. "c1 = vec4(1.0);"; the Vulkan
         // side of LARECOMP_DBG_FS)
         static uint64_t dbg_addr[16];
@@ -1269,7 +1270,7 @@ static void translate_program(void *arg) {
         static int ndbg = -1;
         if (ndbg < 0) {
             ndbg = 0;
-            const char *e = getenv("LARECOMP_DBG_GLSL");
+            const char *e = getenv("BOTW_RECOMP_DBG_GLSL");
             for (const char *q = e; q && *q && ndbg < 16;) {
                 const char *bar = strchr(q, '|'), *colon = strchr(q, ':');
                 size_t len = bar ? (size_t)(bar - q) : strlen(q);

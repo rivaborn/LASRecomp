@@ -1,7 +1,8 @@
+// New in BotW Recomp (based on LAS Recomp by Peiikai, MIT).
 // Checkpoint and rewind, in-process, for recreating a bug exactly (off by default; Windows).
-//   LARECOMP_CHECKPOINT=1                 enables it (host objects then come from the arena: runtime/arena.c)
-//   LARECOMP_CHECKPOINT_AT=<frame>        take a checkpoint at that presented frame
-//   LARECOMP_REWIND_AT=<frame>[,<frame>]  rewind to the checkpoint at those frames (the same moment is replayed)
+//   BOTW_RECOMP_CHECKPOINT=1                 enables it (host objects then come from the arena: runtime/arena.c)
+//   BOTW_RECOMP_CHECKPOINT_AT=<frame>        take a checkpoint at that presented frame
+//   BOTW_RECOMP_REWIND_AT=<frame>[,<frame>]  rewind to the checkpoint at those frames (the same moment is replayed)
 //   F5 / F8 (keyboard, while playing)     take a checkpoint / rewind to it
 // Design and measurements: coding_workflow knowledge/switch-decompile-and-port/14-checkpoint-feasibility.md.
 //
@@ -445,8 +446,8 @@ void checkpoint_frame(uint64_t frame) {
             cmdbuf_checkpoint_statics();
             LOG("[checkpoint] on: F5 takes a checkpoint, F8 rewinds to it\n");
         }
-        at = getenv("LARECOMP_CHECKPOINT_AT") ? strtoull(getenv("LARECOMP_CHECKPOINT_AT"), NULL, 0) : 0;
-        snprintf(rewinds, sizeof rewinds, "%s", getenv("LARECOMP_REWIND_AT") ? getenv("LARECOMP_REWIND_AT") : "");
+        at = getenv("BOTW_RECOMP_CHECKPOINT_AT") ? strtoull(getenv("BOTW_RECOMP_CHECKPOINT_AT"), NULL, 0) : 0;
+        snprintf(rewinds, sizeof rewinds, "%s", getenv("BOTW_RECOMP_REWIND_AT") ? getenv("BOTW_RECOMP_REWIND_AT") : "");
     }
     if (!rt_arena_active() || !t_cur) return;
     g_rewind = 0;

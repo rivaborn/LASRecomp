@@ -1,4 +1,5 @@
-// Debugging: LARECOMP_HEAP_FAIL=<hex guest addr>[,...] wraps those allocator functions (virtual calls reach them
+// New in BotW Recomp (based on LAS Recomp by Peiikai, MIT).
+// Debugging: BOTW_RECOMP_HEAP_FAIL=<hex guest addr>[,...] wraps those allocator functions (virtual calls reach them
 // through the dispatcher, where address overrides apply) and logs every call that returns NULL: the heap object, a
 // name found in its first bytes, the size and alignment asked for, and the caller. For finding which game heap runs
 // out (Breath of the Wild: sead::ExpHeap::tryAlloc 0x700125ac00, sead::FrameHeap::tryAlloc 0x700125d560).
@@ -28,9 +29,9 @@ static const char *heap_name(uint64_t heap) {
 static void heapfail_wrap(Cpu *c) {
     uint64_t heap = c->x[0], size = c->x[1], lr = c->x[30], fn_addr = c->pc;
     int64_t align = (int64_t)(int32_t)c->x[2];
-    static uint64_t regs_lr = ~0ull;  // LARECOMP_HEAP_REGS=<hex lr>: the callee-saved registers of calls from there
+    static uint64_t regs_lr = ~0ull;  // BOTW_RECOMP_HEAP_REGS=<hex lr>: the callee-saved registers of calls from there
     if (regs_lr == ~0ull) {
-        const char *e = getenv("LARECOMP_HEAP_REGS");
+        const char *e = getenv("BOTW_RECOMP_HEAP_REGS");
         regs_lr = e ? strtoull(e, NULL, 16) : 0;
     }
     if (regs_lr && lr == regs_lr)
@@ -43,8 +44,8 @@ static void heapfail_wrap(Cpu *c) {
     GuestFn f = dispatch_lookup(c->pc);
     if (!f) FATAL("heapfail: no function at %llx\n", (unsigned long long)c->pc);
     f(c);
-    static const char *trace = (const char *)-1;  // LARECOMP_HEAP_TRACE=<substring>: every call on heaps so named
-    if (trace == (const char *)-1) trace = getenv("LARECOMP_HEAP_TRACE");
+    static const char *trace = (const char *)-1;  // BOTW_RECOMP_HEAP_TRACE=<substring>: every call on heaps so named
+    if (trace == (const char *)-1) trace = getenv("BOTW_RECOMP_HEAP_TRACE");
     if (trace && strstr(heap_name(heap), trace)) {
         // which guest thread allocates on each traced heap: a second one is logged once ([heapshare])
         static struct { uint64_t heap, tid; int prio; } owners[4096];
@@ -70,7 +71,7 @@ static void heapfail_wrap(Cpu *c) {
             if (c->x[0] && g_trace_n < (int)(sizeof g_trace / sizeof *g_trace))
                 g_trace[g_trace_n++] = (TraceEntry){c->x[0], size, lr};
         }
-        if (getenv("LARECOMP_HEAP_TRACE_ALL"))
+        if (getenv("BOTW_RECOMP_HEAP_TRACE_ALL"))
             LOG("[heaptrace] %s fn %llx size %#llx align %lld -> %llx (lr %llx, thread %llx)\n", heap_name(heap),
                 (unsigned long long)fn_addr, (unsigned long long)size, (long long)align, (unsigned long long)c->x[0],
                 (unsigned long long)lr, (unsigned long long)tid);
@@ -85,7 +86,7 @@ static void heapfail_wrap(Cpu *c) {
             // the heap's first allocation (a model's own object, for resource heaps): words, pointers inside the
             // heap as start+offset (comparable with another run's)
             const uint64_t start = w[3], obj = start + 0x60, *o = (const uint64_t *)(uintptr_t)obj;
-            for (int k = 0; k < g_trace_n; k++) {  // this heap's earlier allocations (LARECOMP_HEAP_TRACE)
+            for (int k = 0; k < g_trace_n; k++) {  // this heap's earlier allocations (BOTW_RECOMP_HEAP_TRACE)
                 const uint8_t *b = (const uint8_t *)(uintptr_t)g_trace[k].addr;
                 LOG("[heapfail]   alloc %llx size %#llx lr %llx: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n",
                     (unsigned long long)g_trace[k].addr, (unsigned long long)g_trace[k].size,
@@ -107,7 +108,7 @@ static void heapfail_wrap(Cpu *c) {
     }
 }
 
-// LARECOMP_MEMCMP_TEST: call the guest's own memcmp (recompiled from the SDK) on known inputs and log any result
+// BOTW_RECOMP_MEMCMP_TEST: call the guest's own memcmp (recompiled from the SDK) on known inputs and log any result
 // whose sign differs from the host's.
 static void memcmp_test(void) {
     uint64_t fn = loader_find_symbol("memcmp");
@@ -150,8 +151,8 @@ static void memcmp_test(void) {
 }
 
 void heapfail_init(void) {
-    if (getenv("LARECOMP_MEMCMP_TEST")) memcmp_test();
-    const char *e = getenv("LARECOMP_HEAP_FAIL");
+    if (getenv("BOTW_RECOMP_MEMCMP_TEST")) memcmp_test();
+    const char *e = getenv("BOTW_RECOMP_HEAP_FAIL");
     for (const char *p = e; p && *p;) {
         uint64_t a = strtoull(p, (char **)&p, 16);
         if (a) hle_override(a, heapfail_wrap, "heapfail");

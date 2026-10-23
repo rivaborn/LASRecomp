@@ -1,3 +1,4 @@
+// Based on LAS Recomp by Peiikai (MIT); modified for BotW Recomp.
 // Runtime-internal declarations.
 #pragma once
 #include <pthread.h>
@@ -86,11 +87,11 @@ int ui_run(void);  // window loop; returns the reboot kind requested (the window
 void guest_call(Cpu *c, uint64_t addr);   // call guest function at addr (saves/restores x30)
 uint64_t guest_sym(const char *name);     // cached loader_find_symbol, fatal if missing
 void *hle_alloc(uint64_t size);           // zeroed guest-visible memory (never freed)
-void rt_heap_check(const char *where);    // LARECOMP_HEAPCHECK: validate the CRT heap here (debug_alloc.c)
-// turbo.c (LARECOMP_TURBO_UNTIL / LARECOMP_TURBO): guest time faster than real time until a frame
+void rt_heap_check(const char *where);    // BOTW_RECOMP_HEAPCHECK: validate the CRT heap here (debug_alloc.c)
+// turbo.c (BOTW_RECOMP_TURBO_UNTIL / BOTW_RECOMP_TURBO): guest time faster than real time until a frame
 double turbo_factor(void);                // 1 when off
 uint64_t turbo_guest_ns(void);            // monotonic guest nanoseconds (plat_now_ns() without turbo)
-bool turbo_hide_frames(void);             // LARECOMP_TURBO_NO_PRESENT while turbo is on
+bool turbo_hide_frames(void);             // BOTW_RECOMP_TURBO_NO_PRESENT while turbo is on
 extern const char *g_romfs_dir;
 extern uint64_t g_title_id;
 // Link's Awakening's own features (randomizer, QoL, overlays, editors) read its memory at fixed addresses: only for it.

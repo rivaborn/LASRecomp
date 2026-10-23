@@ -1,5 +1,6 @@
+// New in BotW Recomp (based on LAS Recomp by Peiikai, MIT).
 // Host objects that guest state points to (kernel objects, IPC sessions and services, NVN host objects), for
-// checkpoints (runtime/checkpoint.c). With LARECOMP_CHECKPOINT set they come from one arena, which a checkpoint copies
+// checkpoints (runtime/checkpoint.c). With BOTW_RECOMP_CHECKPOINT set they come from one arena, which a checkpoint copies
 // and a rewind writes back whole (allocator state included: it lives at the arena's start). Otherwise these are calloc
 // and free, as before.
 //
@@ -33,7 +34,7 @@ static int g_on = -1;
 
 static bool arena_on(void) {
     if (g_on < 0) {
-        g_on = getenv("LARECOMP_CHECKPOINT") != NULL;
+        g_on = getenv("BOTW_RECOMP_CHECKPOINT") != NULL;
         if (g_on) {
             g_base = (uint8_t *)(uintptr_t)plat_reserve(ARENA_RESERVE);
             if (!g_base) FATAL("checkpoint arena: no address space\n");

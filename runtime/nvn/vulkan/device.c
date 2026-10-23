@@ -1,3 +1,4 @@
+// Based on LAS Recomp by Peiikai (MIT); modified for BotW Recomp.
 // Vulkan device, window, swapchain and presentation (counterpart of the window/present half of metal.m).
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
@@ -14,6 +15,7 @@
 #include "vk.h"
 #include "../output_scale.h"
 #include "../renderer.h"
+#include "product.h"
 
 VkG g_vk;
 static SDL_Window *window;
@@ -38,7 +40,7 @@ static void create_instance(void) {
     for (Uint32 i = 0; i < n_sdl && n_ext < 14; i++) ext[n_ext++] = sdl_ext[i];
     bool validate = getenv("LARECOMP_VK_VALIDATION") != NULL;
     // (debug utils also for RenderDoc captures: rdoc.c names the shader modules after their guest programs)
-    bool names = getenv("LARECOMP_RDOC_CAPTURE") != NULL;
+    bool names = getenv("BOTW_RECOMP_RDOC_CAPTURE") != NULL;
     if (validate || names) ext[n_ext++] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
     const char *layers[] = {"VK_LAYER_KHRONOS_validation"};
     VkApplicationInfo app = {.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO, .pApplicationName = "LARecomp",
@@ -486,7 +488,7 @@ void backend_present(NvnTexture *t) {
     vk_end_pass();
     static const float black[4] = {0, 0, 0, 1};
     uint64_t t0 = SDL_GetTicksNS();
-    bool have = !turbo_hide_frames() && vk_frame_begin(black);  // (LARECOMP_TURBO_NO_PRESENT: counted, not shown)
+    bool have = !turbo_hide_frames() && vk_frame_begin(black);  // (BOTW_RECOMP_TURBO_NO_PRESENT: counted, not shown)
     uint64_t nd = SDL_GetTicksNS() - t0;
     if (nd > 30000000) {
         static int warned;
@@ -545,9 +547,9 @@ void backend_present(NvnTexture *t) {
     if (rt_game_is_las()) warp_frame(total_frames);
     extern void reboot_test_frame(uint64_t frame);  // runtime/main.c (LARECOMP_REBOOT_AT)
     reboot_test_frame(total_frames);
-    extern void checkpoint_frame(uint64_t frame);  // (runtime/checkpoint.c; LARECOMP_CHECKPOINT only)
+    extern void checkpoint_frame(uint64_t frame);  // (runtime/checkpoint.c; BOTW_RECOMP_CHECKPOINT only)
     checkpoint_frame(total_frames);
-    extern void rdoc_frame(uint64_t frame);  // (vulkan/rdoc.c; LARECOMP_RDOC_CAPTURE under RenderDoc)
+    extern void rdoc_frame(uint64_t frame);  // (vulkan/rdoc.c; BOTW_RECOMP_RDOC_CAPTURE under RenderDoc)
     rdoc_frame(total_frames);
     extern void save_editor_frame(uint64_t frame);
     extern void vk_level_change_check(void);
@@ -660,7 +662,7 @@ void ui_window_init(void) {
                                             getenv("LARECOMP_HOST_INPUT") || getenv("LARECOMP_BIND_TEST"));
         if (scripted) SDL_SetHint(SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN, "0");
     }
-    window = SDL_CreateWindow("LAS Recomp", win_w, win_h, wflags);
+    window = SDL_CreateWindow(PRODUCT_NAME, win_w, win_h, wflags);
     if (!window) FATAL("SDL_CreateWindow: %s\n", SDL_GetError());
     rt_window_icon(window);
     // the Fullscreen setting applies from the start screen on (not only once the game runs); test windows stay windows

@@ -1,14 +1,16 @@
+// New in BotW Recomp (based on LAS Recomp by Peiikai, MIT).
 // Start points, for debugging late parts of a game without replaying it from the boot.
 //
 // A start point is the game's own save data plus how to get from the boot to the point, in
-// savepoints/<name>/ in the data root (runtime/paths.h; git-ignored with the rest of build-<game>/):
+// savepoints/<name>/ in the data root (runtime/paths.h; git-ignored with the rest of build-<game>/), or in
+// ../savepoints/ when the data root has none (botw_decomp keeps them in recomp/savepoints/, next to recomp/build/):
 //   save_0/...   the save filesystem exactly as services/fs.c serves it (save_<attribute type>)
 //   start.txt    optional KEY=VALUE lines (# comments) set before the boot unless the environment already has them,
-//                e.g. LARECOMP_INPUT=600:A:10,900:A:10 (press Continue) or LARECOMP_TURBO_UNTIL=<frame>
+//                e.g. LARECOMP_INPUT=600:A:10,900:A:10 (press Continue) or BOTW_RECOMP_TURBO_UNTIL=<frame>
 //
-// LARECOMP_START=<name> copies the point's files to save_start/ (recreated on each run, so the point itself is never
+// BOTW_RECOMP_START=<name> copies the point's files to save_start/ (recreated on each run, so the point itself is never
 // written) and boots with LARECOMP_SAVE_DIR=save_start.
-// LARECOMP_SAVE_SNAPSHOT=<name> makes new points from a run: each time the game commits its save filesystem, that
+// BOTW_RECOMP_SAVE_SNAPSHOT=<name> makes new points from a run: each time the game commits its save filesystem, that
 // save becomes savepoints/<name>-<n>/ (with the run's LARECOMP_INPUT in its start.txt).
 #include <dirent.h>
 #include <stdbool.h>
@@ -62,6 +64,10 @@ int rt_copy_tree(const char *from, const char *to) {  // files copied, -1 on an 
     return n;
 }
 
+static const char *points_dir(void) {
+    return !is_dir("savepoints") && is_dir("../savepoints") ? "../savepoints" : "savepoints";
+}
+
 static void apply_start_txt(const char *path) {
     FILE *f = fopen(path, "r");
     if (!f) return;
@@ -83,11 +89,11 @@ static void apply_start_txt(const char *path) {
 
 // main.c, after rt_paths_init (the data root is the working directory). Returns true when a start point is used.
 bool start_point_init(void) {
-    const char *name = getenv("LARECOMP_START");
+    const char *name = getenv("BOTW_RECOMP_START");
     if (!name || !*name) return false;
     char dir[1024];
-    snprintf(dir, sizeof dir, "savepoints/%s", name);
-    if (!is_dir(dir)) FATAL("LARECOMP_START: no start point %s/%s\n", rt_data_root(), dir);
+    snprintf(dir, sizeof dir, "%s/%s", points_dir(), name);
+    if (!is_dir(dir)) FATAL("BOTW_RECOMP_START: no start point %s/%s\n", rt_data_root(), dir);
     rt_remove_tree("save_start");
     char from[1100];
     int files = 0;
@@ -99,11 +105,11 @@ bool start_point_init(void) {
         snprintf(from, sizeof from, "%s/%s", dir, e->d_name);
         snprintf(to, sizeof to, "save_start/%s", e->d_name);
         int k = rt_copy_tree(from, to);
-        if (k < 0) FATAL("LARECOMP_START: copying %s failed\n", from);
+        if (k < 0) FATAL("BOTW_RECOMP_START: copying %s failed\n", from);
         files += k;
     }
     if (d) closedir(d);
-    if (!files) FATAL("LARECOMP_START: %s has no save_<n>/ files\n", dir);
+    if (!files) FATAL("BOTW_RECOMP_START: %s has no save_<n>/ files\n", dir);
     setenv("LARECOMP_SAVE_DIR", "save_start", 1);
     snprintf(from, sizeof from, "%s/start.txt", dir);
     apply_start_txt(from);
@@ -113,14 +119,15 @@ bool start_point_init(void) {
 
 // services/fs.c, IFileSystem Commit on a mounted save directory (root: "<save dir>/save_<n>").
 void start_point_save_committed(const char *root) {
-    const char *name = getenv("LARECOMP_SAVE_SNAPSHOT");
+    const char *name = getenv("BOTW_RECOMP_SAVE_SNAPSHOT");
     if (!name || !*name) return;
     const char *sub = strrchr(root, '/');
     sub = sub ? sub + 1 : root;
-    mkdir("savepoints", 0755);
+    const char *points = points_dir();
+    mkdir(points, 0755);
     char dir[1024], to[1100];
     for (int n = 1;; n++) {
-        snprintf(dir, sizeof dir, "savepoints/%s-%d", name, n);
+        snprintf(dir, sizeof dir, "%s/%s-%d", points, name, n);
         if (!is_dir(dir)) break;
     }
     mkdir(dir, 0755);
@@ -130,7 +137,7 @@ void start_point_save_committed(const char *root) {
     FILE *f = fopen(to, "w");
     if (f) {
         extern uint64_t renderer_present_count(void);
-        fprintf(f, "# made by LARECOMP_SAVE_SNAPSHOT at frame %llu\n", (unsigned long long)renderer_present_count());
+        fprintf(f, "# made by BOTW_RECOMP_SAVE_SNAPSHOT at frame %llu\n", (unsigned long long)renderer_present_count());
         if (getenv("LARECOMP_INPUT")) fprintf(f, "# the run's input was: LARECOMP_INPUT=%s\n", getenv("LARECOMP_INPUT"));
         fprintf(f, "# add the LARECOMP_INPUT that loads this save from the title screen (Continue)\n");
         fclose(f);

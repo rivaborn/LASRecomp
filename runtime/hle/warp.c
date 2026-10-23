@@ -1,3 +1,4 @@
+// Based on LAS Recomp by Peiikai (MIT); modified for BotW Recomp.
 // Warp: jump Link to any level / spawn point (menu "Warp" tab).
 //
 // The game's event action GameControl.RequestLevelJump (main+0x7ff160) does not change level itself: it

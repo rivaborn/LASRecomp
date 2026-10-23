@@ -1,3 +1,4 @@
+// Based on LAS Recomp by Peiikai (MIT); modified for BotW Recomp.
 // Windows host layer (runtime/platform.h).
 #include <windows.h>
 #include <fcntl.h>
@@ -9,6 +10,7 @@
 #include <io.h>
 
 #include "../platform.h"
+#include "product.h"
 
 // ---- guest address space
 // The window is reserved up front and committed per region (plat_commit from the loader / kernel). Anything
@@ -28,14 +30,14 @@ static bool lazy_commit(uint64_t a) {
 
 static bool g_report_crashes;
 
-// Debugging: LARECOMP_WATCH=<hex address> - a hardware write watchpoint (debug register 0, 8 bytes) on every guest
+// Debugging: BOTW_RECOMP_WATCH=<hex address> - a hardware write watchpoint (debug register 0, 8 bytes) on every guest
 // thread; each write is logged with the host instruction (as f_<guest function>+offset) and the value written.
 static uint64_t g_watch = ~0ull;
 const char *rt_host_fn_name(uint64_t pc, uint64_t *offset);
 
 void plat_watch_thread(void) {
     if (g_watch == ~0ull) {
-        const char *e = getenv("LARECOMP_WATCH");
+        const char *e = getenv("BOTW_RECOMP_WATCH");
         g_watch = e ? strtoull(e, NULL, 16) & ~7ull : 0;
     }
     if (!g_watch) return;
@@ -153,7 +155,7 @@ void plat_thread_realtime(uint64_t period_ns) {
 }
 
 // ---- process
-// Release builds are GUI-subsystem executables (no console window): stdout / stderr go to lasrecomp.log next to the
+// Release builds are GUI-subsystem executables (no console window): stdout / stderr go to <PRODUCT_EXE>.log next to the
 // exe, and a fatal error shows a message box (plat_fatal_notice) instead of vanishing. Processes started by this one
 // (the start screen re-executing itself for the game) append to the same log.
 static char g_log_path[MAX_PATH];
@@ -165,7 +167,7 @@ static void log_to_file_without_console(void) {
     if (!n || n >= sizeof exe) return;
     char *slash = strrchr(exe, '\\');
     if (slash) slash[1] = 0;
-    snprintf(g_log_path, sizeof g_log_path, "%slasrecomp.log", exe);
+    snprintf(g_log_path, sizeof g_log_path, "%s" PRODUCT_EXE ".log", exe);
     bool append = getenv("LASRECOMP_LOG_APPEND") != NULL;
     if (!freopen(g_log_path, append ? "ab" : "wb", stderr)) { g_log_path[0] = 0; return; }
     setvbuf(stderr, NULL, _IONBF, 0);
@@ -178,8 +180,8 @@ static void log_to_file_without_console(void) {
 static void require_cpu(void) {
     __builtin_cpu_init();
     if (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma") && __builtin_cpu_supports("bmi2")) return;
-    MessageBoxA(NULL, "LAS Recomp needs a CPU with AVX2 (Intel Haswell / 2013 or newer, AMD Excavator / Zen or newer).",
-                "LAS Recomp", MB_ICONERROR | MB_OK);
+    MessageBoxA(NULL, PRODUCT_NAME " needs a CPU with AVX2 (Intel Haswell / 2013 or newer, AMD Excavator / Zen or newer).",
+                PRODUCT_NAME, MB_ICONERROR | MB_OK);
     ExitProcess(1);
 }
 
@@ -187,7 +189,7 @@ static void require_cpu(void) {
 void plat_fatal_notice(void) {
     if (!g_log_path[0]) return;
     fflush(stderr);
-    char text[1024] = "LAS Recomp stopped because of an error.";
+    char text[1024] = PRODUCT_NAME " stopped because of an error.";
     FILE *f = fopen(g_log_path, "rb");
     if (f) {
         static char tail[16384];
@@ -203,17 +205,17 @@ void plat_fatal_notice(void) {
         if (line) {
             char *end = strchr(line, '\n');
             if (end) *end = 0;
-            snprintf(text, sizeof text, "LAS Recomp stopped because of an error:\n\n%.600s", line);
+            snprintf(text, sizeof text, PRODUCT_NAME " stopped because of an error:\n\n%.600s", line);
             if (strstr(line, "Vulkan") || strstr(line, "VK_") || strstr(line, "vk")) {
                 size_t l = strlen(text);
-                snprintf(text + l, sizeof text - l, "\n\nLAS Recomp needs a graphics driver with Vulkan 1.3: install the "
+                snprintf(text + l, sizeof text - l, "\n\n" PRODUCT_NAME " needs a graphics driver with Vulkan 1.3: install the "
                          "latest driver for your GPU (NVIDIA, AMD or Intel).");
             }
         }
     }
     size_t l = strlen(text);
     snprintf(text + l, sizeof text - l, "\n\nDetails: %s", g_log_path);
-    MessageBoxA(NULL, text, "LAS Recomp", MB_ICONERROR | MB_OK);
+    MessageBoxA(NULL, text, PRODUCT_NAME, MB_ICONERROR | MB_OK);
 }
 
 void plat_init(void) {
@@ -308,7 +310,7 @@ void plat_print_backtrace(void) {
         const char *s = plat_symbol(pc, &off);
         if (!s) s = rt_host_fn_name(pc, &off);
         if (s) fprintf(stderr, "  #%-2d %016llx %s+%llx\n", i, (unsigned long long)pc, s, (unsigned long long)off);
-        else fprintf(stderr, "  #%-2d %016llx lasrecomp+%llx\n", i, (unsigned long long)pc,
+        else fprintf(stderr, "  #%-2d %016llx " PRODUCT_EXE "+%llx\n", i, (unsigned long long)pc,
                      (unsigned long long)(pc - exe));
     }
 }

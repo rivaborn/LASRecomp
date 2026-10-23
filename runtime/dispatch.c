@@ -1,3 +1,4 @@
+// Based on LAS Recomp by Peiikai (MIT); modified for BotW Recomp.
 // Guest address -> recompiled function lookup, and host (HLE) function registry.
 #include <pthread.h>
 #include <signal.h>
@@ -230,7 +231,7 @@ const char *rt_host_fn_name(uint64_t pc, uint64_t *offset) {
 }
 
 static const char *host_sym(uint64_t pc, uint64_t *offset) {
-    // (game functions first: they live in lasgame.dll, which the OS lookup can only name as a whole)
+    // (game functions first: they live in the game library (botw_game.dll), which the OS lookup can only name as a whole)
     const char *s = rt_host_fn_name(pc, offset);
     return s ? s : plat_symbol(pc, offset);
 }

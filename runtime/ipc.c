@@ -1,3 +1,4 @@
+// Based on LAS Recomp by Peiikai (MIT); modified for BotW Recomp.
 // IPC message parsing/serialization and session management.
 #include <stdlib.h>
 #include <string.h>

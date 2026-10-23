@@ -1,3 +1,4 @@
+// Based on LAS Recomp by Peiikai (MIT); modified for BotW Recomp.
 // NVN objects, builders, and state objects (everything except command recording).
 #include <pthread.h>
 #include <stddef.h>
@@ -72,8 +73,8 @@ NVN(nvnDeviceSetDebugLabel) { (void)c; }
 NVN(nvnDeviceGetInteger) {
     const uint32_t v = device_integer((uint32_t)A(1));
     *(int32_t *)AP(2) = (int32_t)v;
-    static int log = -1;  // LARECOMP_LOG_DEVINFO: every query once per (index, caller)
-    if (log < 0) log = getenv("LARECOMP_LOG_DEVINFO") != NULL;
+    static int log = -1;  // BOTW_RECOMP_LOG_DEVINFO: every query once per (index, caller)
+    if (log < 0) log = getenv("BOTW_RECOMP_LOG_DEVINFO") != NULL;
     if (log) {
         static uint64_t seen[512];
         static int n;

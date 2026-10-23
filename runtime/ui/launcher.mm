@@ -1,3 +1,4 @@
+// Based on LAS Recomp by Peiikai (MIT); modified for BotW Recomp.
 // Start screen, shown before the game boots (user 2026-10-08, styled after Dusklight's launcher): PLAY (with
 // ‹ Vanilla / seed › picker), SETTINGS, QUIT, game-files status at the lower left. Nothing of the game ships with
 // LAS Recomp: on first launch the user picks the folder with their own game files (v1.0.0), we check the main
@@ -43,6 +44,7 @@ extern "C" {
 #include "nsp_extract.h"
 #include "settings.h"
 #include "input_bind.h"
+#include "product.h"
 void controls_bindings_draw(float scale);  // ui/controls_ui.mm
 void ui_window_init(void);
 SDL_Window *ui_window(void);
@@ -445,7 +447,7 @@ static void *nsp_thread(void *) {
     return NULL;
 }
 
-// lasrecomp --extract-nsp <file.nsp>: the same extraction without the start screen (scripts, tests). Keys and hactool
+// botw_recomp --extract-nsp <file.nsp>: the same extraction without the start screen (scripts, tests). Keys and hactool
 // as the start screen finds them; the .nsp becomes the chosen one. Exit code 0 when the files are ready to play.
 static void cli_progress(double f, const char *step) {
     static int last = -1;
@@ -703,7 +705,7 @@ static bool menu_tip(float s) {
         static const char *const home[] = {"Home button", "Xbox button", "PlayStation button"};  // (bind_label_family)
         static const char *const pad[] = {"Minus + Plus", "View + Menu", "Create + Options"};
         ImGui::PushTextWrapPos(0);
-        ImGui::TextUnformatted("LAS Recomp has its own menu for settings, the randomizer, cosmetics and more.");
+        ImGui::TextUnformatted(PRODUCT_NAME " has its own menu for settings, the randomizer, cosmetics and more.");
         ImGui::Spacing();
         int fam = bind_label_family() % 3;
         ImGui::Text("Open it in game with F1 or Esc, or on a controller with the %s (or %s together).", home[fam], pad[fam]);
@@ -922,7 +924,7 @@ static void prelaunch_tab(float sc) {
         ImGui::PushFont(g_font_menu);
         ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), "Are you sure?");
         ImGui::PopFont();
-        ImGui::Text("This deletes LAS Recomp's copy of the game files (%.1f GB).", gb);
+        ImGui::Text("This deletes " PRODUCT_NAME "'s copy of the game files (%.1f GB).", gb);
         ImGui::TextDisabled("Saves, seeds and settings are kept. Your own game files aren't touched.");
         if (rt_dev_mode()) {  // (a source checkout: the files are the project's own extracted/)
             bool abs = !g_root.empty() && (g_root[0] == '/' || (g_root.size() > 1 && g_root[1] == ':'));
@@ -932,7 +934,7 @@ static void prelaunch_tab(float sc) {
         ImGui::Spacing();
         if (ImGui::Button("Delete", ImVec2(220 * sc, 0))) {
             bool ok = rt_remove_game_files(g_root.c_str());  // (runtime/paths.c: only what the extraction made)
-            set_job(ok ? "Game files deleted." : "Could not delete the game files (not in LAS Recomp's data folder?).", !ok);
+            set_job(ok ? "Game files deleted." : "Could not delete the game files (not in " PRODUCT_NAME "'s data folder?).", !ok);
             g_files_deleted = true, gb = -1;
             ImGui::CloseCurrentPopup();
         }
@@ -1191,7 +1193,7 @@ extern "C" void launcher_run(const char *root) {
             ImGui::SetCursorPos(ImVec2(x0, 120 * s));
             ImGui::PushFont(g_font_title);
             if (page == MAIN) {  // gold to orange, shadowed (not behind the Settings / Game Files windows)
-                const char *t = "LAS Recompiled";
+                const char *t = PRODUCT_TITLE;
                 ImVec2 p = ImGui::GetCursorScreenPos();
                 text_fx(ImGui::GetWindowDrawList(), ImGui::GetFont(), ImGui::GetFontSize(), p, IM_COL32(255, 232, 120, 255),
                         IM_COL32(255, 138, 48, 255), t, 3 * s);
@@ -1417,7 +1419,7 @@ extern "C" void launcher_run(const char *root) {
                 if (!src.empty()) src_d += "\n\nChosen: " + src;
                 // the step that's running / its result, under the rows and in the Set up row's explanation
                 const std::string &job_line = job;
-                std::string ex_d = "Copies the game files LAS Recomp needs and recompiles the game from them. This only "
+                std::string ex_d = "Copies the game files " PRODUCT_NAME " needs and recompiles the game from them. This only "
                                    "needs to be done once and may take a while. Your own files aren't changed.";
                 if (!job.empty()) ex_d += "\n\n" + job + (job_hint.empty() ? "" : ".\n" + job_hint);
 
@@ -1460,7 +1462,7 @@ extern "C" void launcher_run(const char *root) {
                     check_left_of_value(keys_v);
                     std::string hac_v = hp.empty() ? "Choose..." : "Found";
                     std::string hac_d = "hactool reads the package (the same tool the nxdecomp pipeline uses). By default "
-                                        "it's looked for next to LAS Recomp.";
+                                        "it's looked for next to " PRODUCT_NAME ".";
                     hac_d += hp.empty() ? "\n\nNot found: choose hactool" PLAT_EXE_SUFFIX "." : "\n\nUsing: " + hp;
                     if (busy) opt_disable_next();
                     if (opt_action("hactool", hac_v.c_str(), hac_d.c_str(), true)) {
@@ -1473,7 +1475,7 @@ extern "C" void launcher_run(const char *root) {
                     }
                     check_left_of_value(hac_v);
                     opt_section("Set up");
-                    std::string nx_d = "Extracts the game code and data from the package into LAS Recomp's data folder: "
+                    std::string nx_d = "Extracts the game code and data from the package into " PRODUCT_NAME "'s data folder: "
                                        "about the size of the game, twice that while it runs. Your .nsp isn't changed.";
                     if (!job.empty()) nx_d += "\n\n" + job + (job_hint.empty() ? "" : ".\n" + job_hint);
                     if (busy || nsp.empty() || !keys_ok || hp.empty()) opt_disable_next();
@@ -1513,7 +1515,7 @@ extern "C" void launcher_run(const char *root) {
                     snprintf(gb, sizeof gb, "%.1f GB", files_gb);
                     opt_section("Game files");
                     if (!g_confirm_delete) {
-                        if (opt_action("Delete game files", gb, "Frees the space LAS Recomp's copy of the game files takes. "
+                        if (opt_action("Delete game files", gb, "Frees the space " PRODUCT_NAME "'s copy of the game files takes. "
                                        "Saves, seeds and settings are kept, and your own game files aren't touched: you can "
                                        "set the game files up again from them.", true))
                             g_confirm_delete = true;
@@ -1523,7 +1525,7 @@ extern "C" void launcher_run(const char *root) {
                             bool ok = rt_remove_game_files(g_root.c_str());
                             status = check_game_files(g_root);
                             if (ok) set_job("Game files deleted.");
-                            else set_job("Couldn't delete the game files", true, "They aren't in LAS Recomp's data folder, "
+                            else set_job("Couldn't delete the game files", true, "They aren't in " PRODUCT_NAME "'s data folder, "
                                          "so they were left alone.");
                             if (!status.empty()) g_bg = 0;
                             g_confirm_delete = false, files_gb = -1;

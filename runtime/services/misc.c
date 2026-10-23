@@ -1,3 +1,4 @@
+// Based on LAS Recomp by Peiikai (MIT); modified for BotW Recomp.
 // Small services: parental control, add-on content, and other mostly-stubbed interfaces.
 #include <string.h>
 

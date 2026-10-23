@@ -1,4 +1,5 @@
-// Checkpoint and rewind, in-process (runtime/checkpoint.c; off unless LARECOMP_CHECKPOINT is set).
+// New in BotW Recomp (based on LAS Recomp by Peiikai, MIT).
+// Checkpoint and rewind, in-process (runtime/checkpoint.c; off unless BOTW_RECOMP_CHECKPOINT is set).
 #pragma once
 #include <stdbool.h>
 #include <stddef.h>

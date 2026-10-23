@@ -1,11 +1,12 @@
-// Sampling profiler for the guest threads (Windows): LARECOMP_SAMPLE=<interval ms> [LARECOMP_SAMPLE_REPORT=<s>].
+// New in BotW Recomp (based on LAS Recomp by Peiikai, MIT).
+// Sampling profiler for the guest threads (Windows): BOTW_RECOMP_SAMPLE=<interval ms> [BOTW_RECOMP_SAMPLE_REPORT=<s>].
 // Every interval each guest thread is suspended for a moment: its instruction pointer and the top of its stack are
 // copied (nothing is allocated meanwhile: the thread may hold the heap lock), then it runs on. Every report period
 // (default 10 s) the most frequent places are printed:
 //   f_<guest addr>                    inside recompiled game code
-//   lasrecomp+<off> / <dll>+<off>     the runtime, the CRT, a driver; with the nearest game function on the stack
+//   botw_recomp+<off> / <dll>+<off>     the runtime, the CRT, a driver; with the nearest game function on the stack
 //                                     ("<- f_..."). ntdll / KERNELBASE leaves are mostly waits (kernel waits, locks).
-// Runtime offsets are named with addr2line -f -e build-<game>/lasrecomp.exe 0x140000000+<off>.
+// Runtime offsets are named with addr2line -f -e build-<game>/botw_recomp.exe 0x140000000+<off>.
 #ifdef _WIN32
 #include <pthread.h>
 #include <stdint.h>
@@ -16,6 +17,7 @@
 
 #include "kernel.h"
 #include "rt.h"
+#include "gamelib.h"
 
 const char *rt_host_fn_name(uint64_t pc, uint64_t *offset);
 int kernel_thread_list(KThread **out, int max);
@@ -27,7 +29,7 @@ typedef struct {
 
 #define TAB 65536
 static Sample tab[TAB];
-static uint64_t game_lo, game_hi, gen_end, total;  // gen_end: end of the generated code (lasgame_tables)
+static uint64_t game_lo, game_hi, gen_end, total;  // gen_end: end of the generated code (gamelib_tables)
 
 static void count(uint64_t leaf, uint64_t game) {
     uint64_t h = (leaf * 0x9E3779B97F4A7C15ull) ^ (game * 0xC2B2AE3D27D4EB4Full);
@@ -90,18 +92,18 @@ static uint64_t leaf_key(uint64_t pc) {  // a game function's host start, or a 6
 
 static void *sampler(void *arg) {
     (void)arg;
-    const long ms = atol(getenv("LARECOMP_SAMPLE"));
-    const double every = getenv("LARECOMP_SAMPLE_REPORT") ? atof(getenv("LARECOMP_SAMPLE_REPORT")) : 10;
+    const long ms = atol(getenv("BOTW_RECOMP_SAMPLE"));
+    const double every = getenv("BOTW_RECOMP_SAMPLE_REPORT") ? atof(getenv("BOTW_RECOMP_SAMPLE_REPORT")) : 10;
     uint64_t t0 = GetTickCount64(), last = t0;
     for (;;) {
         Sleep((DWORD)(ms > 0 ? ms : 1));
         HMODULE g;
-        if (!game_lo && (g = GetModuleHandleA("lasgame.dll"))) {  // (loaded by the boot)
+        if (!game_lo && (g = GetModuleHandleA(GAMELIB_NAME))) {  // (loaded by the boot)
             IMAGE_DOS_HEADER *dos = (IMAGE_DOS_HEADER *)g;
             IMAGE_NT_HEADERS *nt = (IMAGE_NT_HEADERS *)((uint8_t *)g + dos->e_lfanew);
             game_hi = (uint64_t)(uintptr_t)g + nt->OptionalHeader.SizeOfImage;
             game_lo = (uint64_t)(uintptr_t)g;
-            FARPROC tables = GetProcAddress(g, "lasgame_tables");  // (the C runtime is linked in after the generated code)
+            FARPROC tables = GetProcAddress(g, GAMELIB_ENTRY);  // (the C runtime is linked in after the generated code)
             gen_end = tables ? (uint64_t)(uintptr_t)tables : game_hi;
         }
         KThread *th[512];
@@ -138,7 +140,7 @@ static void *sampler(void *arg) {
 }
 
 void sampler_start(void) {
-    const char *e = getenv("LARECOMP_SAMPLE");
+    const char *e = getenv("BOTW_RECOMP_SAMPLE");
     if (!e || atol(e) <= 0) return;
     pthread_t t;
     pthread_create(&t, NULL, sampler, NULL);

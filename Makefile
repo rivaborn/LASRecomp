@@ -1,4 +1,4 @@
-# LAS Recomp build
+# BotW Recomp / LAS Recomp build (GAME=botw: BotW Recomp, based on LAS Recomp by Peiikai, MIT)
 # macOS: Homebrew clang/SDL3/FFmpeg, Metal renderer.
 # Windows: MSYS2 UCRT64 shell (see docs/BUILD-windows.md), clang + Vulkan renderer.
 # Linux: clang + Vulkan renderer, x86-64 or aarch64 (see docs/linux.md).
@@ -31,7 +31,14 @@ endif
 # variants) or any other name (no game patches): generated-<GAME>/, build-<GAME>/, game files in EXEFS.
 # Modules: main, every subsdk0..9 in EXEFS, sdk.
 GAME     ?= las
-ifneq ($(GAME),las)
+# In botw_decomp (recompiler/ next to recomp/), GAME=botw uses recomp/generated, recomp/build and recomp/extracted.
+BOTW_REPO := $(and $(filter botw,$(GAME)),$(wildcard ../recomp/generated))
+ifneq ($(BOTW_REPO),)
+GEN      := ../recomp/generated
+B        ?= ../recomp/build
+EXEFS    ?= ../recomp/extracted/exefs
+GENGAME  := none
+else ifneq ($(GAME),las)
 GEN      := generated-$(GAME)
 B        ?= build-$(GAME)
 GENGAME  := none
@@ -40,6 +47,19 @@ GENGAME  := las
 endif
 EXEFS    ?= extracted/exefs
 SUBSDKS  := $(notdir $(wildcard $(EXEFS)/subsdk[0-9]))
+
+# Product names (runtime/product.h): GAME=botw builds BotW Recomp (botw_recomp.exe, botw_game.dll, botw_recomp.ini);
+# every other game keeps LAS Recomp's names.
+ifeq ($(GAME),botw)
+PRODUCT  := botw_recomp
+GAMELIBN := botw_game
+PRODUCT_DEFS := -DPRODUCT_NAME='"BotW Recomp"' -DPRODUCT_TITLE='"BotW Recompiled"' -DPRODUCT_EXE='"botw_recomp"' \
+                -DPRODUCT_GAMELIB='"botw_game"' -DPRODUCT_SETTINGS='"botw_recomp.ini"'
+else
+PRODUCT  := lasrecomp
+GAMELIBN := lasgame
+PRODUCT_DEFS :=
+endif
 
 # B: build dir. MACOS_MIN: oldest macOS to run on (default: this one). DEPS: prefix with SDL3 / FFmpeg instead of
 # Homebrew's (make deps). `make app` sets all three (build/mac15, 15.0, build/deps); plain `make` uses none.
@@ -68,7 +88,7 @@ IMGUI_OBJ := $(B)/imgui/imgui.o $(B)/imgui/imgui_draw.o $(B)/imgui/imgui_tables.
 ifeq ($(PLATFORM),macos)
 SDL      := $(or $(DEPS),/opt/homebrew/opt/sdl3)
 FFMPEG   := $(or $(DEPS),/opt/homebrew/opt/ffmpeg)
-EXE      := $(B)/lasrecomp
+EXE      := $(B)/$(PRODUCT)
 DEPINC   := -I$(SDL)/include -I$(FFMPEG)/include
 LDFLAGS  := -L$(SDL)/lib -lSDL3 -Wl,-rpath,$(SDL)/lib -L$(FFMPEG)/lib -lavformat -lavcodec -lavutil -lswscale -Wl,-rpath,$(FFMPEG)/lib \
             -framework CoreFoundation -framework Foundation -framework Metal -framework MetalFX -framework QuartzCore -framework AppKit -framework ImageIO -framework CoreGraphics -framework UniformTypeIdentifiers
@@ -76,11 +96,11 @@ BACKEND_SRC := $(wildcard runtime/nvn/*.m)
 BACKEND_OBJ := $(patsubst runtime/%.m,$(B)/rt/%.o,$(BACKEND_SRC))
 IMGUI_OBJ += $(B)/imgui/imgui_impl_metal.o
 UIFLAGS  := -fobjc-arc
-GAMELIB  := $(B)/lasgame.dylib
+GAMELIB  := $(B)/$(GAMELIBN).dylib
 GAMELIB_LDFLAGS := -dynamiclib -undefined dynamic_lookup  # (the runtime functions it calls: the app's own)
 GAMELIB_SHARED := -shared -Wl,-undefined,dynamic_lookup  # (the same, for the start screen's build: zig cc)
 else ifeq ($(PLATFORM),linux)
-EXE      := $(B)/lasrecomp
+EXE      := $(B)/$(PRODUCT)
 DEPINC   := $(if $(DEPS),-I$(DEPS)/include)
 ifeq ($(ARCH),x86_64)
 GENARCH  ?= -march=x86-64-v3  # as on Windows: AVX2 + FMA for the lifted FP/SIMD code (checked at startup)
@@ -95,28 +115,28 @@ BACKEND_SRC := $(wildcard runtime/nvn/vulkan/*.c) $(wildcard runtime/nvn/vulkan/
 BACKEND_OBJ := $(patsubst runtime/%.cpp,$(B)/rt/%.o,$(patsubst runtime/%.c,$(B)/rt/%.o,$(BACKEND_SRC)))
 IMGUI_OBJ += $(B)/imgui/imgui_impl_vulkan.o
 UIFLAGS  := -x c++  # the .mm UI sources are plain C++ apart from __APPLE__ blocks
-GAMELIB  := $(B)/lasgame.so
+GAMELIB  := $(B)/$(GAMELIBN).so
 GAMELIB_LDFLAGS := -shared -fuse-ld=lld  # (the runtime functions it calls: the app's own, -rdynamic)
 GAMELIB_SHARED := -shared
 else
-EXE      := $(B)/lasrecomp.exe
+EXE      := $(B)/$(PRODUCT).exe
 DEPINC   := $(if $(DEPS),-I$(DEPS)/include)
 OSFLAGS  := -D_FILE_OFFSET_BITS=64 -D_POSIX_THREAD_SAFE_FUNCTIONS -D_CRT_RAND_S -DWIN32_LEAN_AND_MEAN -DNOMINMAX
 GENARCH  ?= -march=x86-64-v3  # AVX2 + FMA for the lifted FP/SIMD code (simd.h); override for older CPUs
 GENFLAGS += -D_FILE_OFFSET_BITS=64 $(GENARCH)
 LDFLAGS  := -fuse-ld=lld -Wl,--stack,16777216 $(if $(DEPS),-L$(DEPS)/lib) -lSDL3 -lavformat -lavcodec -lavutil -lswscale \
             -lvulkan-1 -lwinmm -lole32 -lshell32 -lcomdlg32 -luuid -lshaderc_shared \
-            $(if $(RELEASE),-Wl$(comma)--subsystem$(comma)windows)  # release: no console window (log -> lasrecomp.log)
+            $(if $(RELEASE),-Wl$(comma)--subsystem$(comma)windows)  # release: no console window (log -> $(PRODUCT).log)
 BACKEND_SRC := $(wildcard runtime/nvn/vulkan/*.c) $(wildcard runtime/nvn/vulkan/*.cpp)
 BACKEND_OBJ := $(patsubst runtime/%.cpp,$(B)/rt/%.o,$(patsubst runtime/%.c,$(B)/rt/%.o,$(BACKEND_SRC)))
 BACKEND_OBJ += $(B)/rt/platform/windows_rc.o  # the .exe's icon (Explorer, taskbar)
 WINDRES  ?= windres
 IMGUI_OBJ += $(B)/imgui/imgui_impl_vulkan.o
 UIFLAGS  := -x c++ $(OSFLAGS)  # the .mm UI sources are plain C++ apart from __APPLE__ blocks
-GAMELIB  := $(B)/lasgame.dll
+GAMELIB  := $(B)/$(GAMELIBN).dll
 # the runtime functions it calls: exported by the .exe, linked through its import library
-LDFLAGS  += -Wl,--export-all-symbols -Wl,--out-implib,$(B)/lasrecomp.dll.a
-GAMELIB_LDFLAGS := -shared -fuse-ld=lld $(B)/lasrecomp.dll.a
+LDFLAGS  += -Wl,--export-all-symbols -Wl,--out-implib,$(B)/$(PRODUCT).dll.a
+GAMELIB_LDFLAGS := -shared -fuse-ld=lld $(B)/$(PRODUCT).dll.a
 GAMELIB_SHARED := -shared  # (+ the import library: runtime/gamebuild.c)
 endif
 
@@ -128,7 +148,7 @@ GAMELIB_SRCS := tools/gen.py tools/lifter.py tools/analyze.py tools/nso.py tools
 GAMELIB_ID := $(shell (cat $(GAMELIB_SRCS); echo '$(GENFLAGS)') | (shasum -a 256 2>/dev/null || sha256sum) | cut -c1-16)
 
 RT_OBJ   := $(patsubst runtime/%.c,$(B)/rt/%.o,$(RT_SRC))
-RTFLAGS  := -O2 -g -fno-strict-aliasing -Wall -Wno-unused-function -Iruntime -Iruntime/nvn $(DEPINC) $(OSFLAGS)
+RTFLAGS  := -O2 -g -fno-strict-aliasing -Wall -Wno-unused-function -Iruntime -Iruntime/nvn $(DEPINC) $(OSFLAGS) $(PRODUCT_DEFS)
 CXXFLAGS := -O2 -g -std=c++17 -I$(IMGUI) -I$(IMGUI)/backends -Iruntime -Iruntime/nvn $(DEPINC)
 # GUARD_ALLOC=1 (Windows): the runtime's own malloc / calloc / realloc / free through runtime/debug_alloc.c, every
 # block against an inaccessible page: an overrun or a use after free faults where it happens. Slow, memory hungry:

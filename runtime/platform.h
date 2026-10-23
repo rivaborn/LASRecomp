@@ -1,3 +1,4 @@
+// Based on LAS Recomp by Peiikai (MIT); modified for BotW Recomp.
 // Host OS layer: everything the runtime needs that differs between macOS and Windows.
 // Implementations: runtime/platform/macos.c, runtime/platform/windows.c (the Makefile picks one).
 #pragma once

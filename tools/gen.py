@@ -1,3 +1,4 @@
+# Based on LAS Recomp by Peiikai (MIT); modified for BotW Recomp.
 """Generate C for a whole NSO module.
 
 Usage: gen.py <name> <nso> <base> <outdir> [--hle hle_symbols.txt] [--chunk N] [--simd asm|c]

@@ -1,3 +1,4 @@
+// New in BotW Recomp (based on LAS Recomp by Peiikai, MIT).
 // Per-core priority scheduling, as Horizon does it: each of the 4 cores runs one guest thread at a time, the
 // highest-priority ready thread placed on it (lower number = higher priority; equal priority in arrival order).
 // Games rely on it: a thread created at a lower priority on its creator's core doesn't start until the creator
@@ -42,14 +43,14 @@ void sched_init(int def_core) {
 }
 
 int sched_core_for(int ideal) {
-    static int one = -1;  // LARECOMP_ONE_CORE (debugging): every thread on one core, guest code strictly one at a time
-    if (one < 0) one = getenv("LARECOMP_ONE_CORE") != NULL;
+    static int one = -1;  // BOTW_RECOMP_ONE_CORE (debugging): every thread on one core, guest code strictly one at a time
+    if (one < 0) one = getenv("BOTW_RECOMP_ONE_CORE") != NULL;
     if (one) return default_core;
     return ideal >= 0 && ideal < NCORES ? ideal : default_core;
 }
 
 static bool off(void) {
-    if (disabled < 0) disabled = getenv("LARECOMP_NO_SCHED") != NULL;  // debugging: every thread free, as before
+    if (disabled < 0) disabled = getenv("BOTW_RECOMP_NO_SCHED") != NULL;  // debugging: every thread free, as before
     return disabled;
 }
 

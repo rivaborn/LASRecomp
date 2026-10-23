@@ -1,4 +1,5 @@
-// Host objects that guest state points to: from the checkpoint arena when LARECOMP_CHECKPOINT is set, else
+// New in BotW Recomp (based on LAS Recomp by Peiikai, MIT).
+// Host objects that guest state points to: from the checkpoint arena when BOTW_RECOMP_CHECKPOINT is set, else
 // calloc / realloc / free (runtime/arena.c).
 #pragma once
 #include <stdbool.h>

@@ -1,4 +1,5 @@
-// Debugging: LARECOMP_EXPHEAP_CHECK=<hex guest addr>[,...] wraps those sead::ExpHeap methods (virtual calls reach
+// New in BotW Recomp (based on LAS Recomp by Peiikai, MIT).
+// Debugging: BOTW_RECOMP_EXPHEAP_CHECK=<hex guest addr>[,...] wraps those sead::ExpHeap methods (virtual calls reach
 // them through the dispatcher, where address overrides apply) and checks the heap's free list before and after
 // each call: every link inside the guest window, each link's back pointer the one before it, the walk closing at
 // the list head. The first break per heap is logged with the method, its caller and whether the list was already
@@ -56,7 +57,7 @@ static void wrap(Cpu *c) {
 }
 
 void expheap_check_init(void) {
-    const char *e = getenv("LARECOMP_EXPHEAP_CHECK");
+    const char *e = getenv("BOTW_RECOMP_EXPHEAP_CHECK");
     for (const char *p = e; p && *p;) {
         uint64_t a = strtoull(p, (char **)&p, 16);
         if (a) {

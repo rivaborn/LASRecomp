@@ -1,3 +1,4 @@
+// Based on LAS Recomp by Peiikai (MIT); modified for BotW Recomp.
 // Runs lifted FP/SIMD tests (tools/test_simd.py) on the host; portable (Windows / POSIX).
 // argv: code.bin buf.bin cases.bin out.bin. Prints nothing on success.
 #include <stdio.h>

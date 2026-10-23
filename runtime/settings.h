@@ -1,10 +1,11 @@
-// User settings (larecomp.ini next to the executable's working directory), edited from the in-game menu.
+// Based on LAS Recomp by Peiikai (MIT); modified for BotW Recomp.
+// User settings (botw_recomp.ini / larecomp.ini, PRODUCT_SETTINGS, next to the executable's working directory), edited from the in-game menu.
 #pragma once
 #include <stdbool.h>
 
 enum { ASPECT_UNLOCKED = 0, ASPECT_ORIGINAL = 1 };
 enum { RES_MATCH = 0, /* 1..8 = 1x..8x */ RES_DYNAMIC = 9, RES_Q75 = 10, RES_Q25 = 11, RES_Q50 = 12 };
-// (11 was 67% of the display: larecomp.ini "67%" now loads as RES_Q75)
+// (11 was 67% of the display: a settings file's "67%" now loads as RES_Q75)
 enum { UPSCALE_BILINEAR = 0, UPSCALE_METALFX = 1 /* macOS */, UPSCALE_FSR1 = 2 /* Windows: AMD FSR 1 */ };
 #ifdef __APPLE__
 #define UPSCALE_SHARP UPSCALE_METALFX  // each OS's non-bilinear upscaler (the default)

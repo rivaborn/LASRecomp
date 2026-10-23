@@ -1,3 +1,4 @@
+// New in BotW Recomp (based on LAS Recomp by Peiikai, MIT).
 // Game files from the player's own .nsp: ExeFS + RomFS image (the update applied over the base), via hactool.
 // runtime/nsp_extract.c has the steps; the start screen's Game Files page runs it (games other than Link's Awakening).
 #pragma once

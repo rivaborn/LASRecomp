@@ -1,3 +1,4 @@
+// Based on LAS Recomp by Peiikai (MIT); modified for BotW Recomp.
 // In-game overlay menu built with Dear ImGui (Metal renderer on macOS, Vulkan elsewhere; input fed from SDL events).
 //
 // Threads: SDL events arrive on the main thread and are queued; the menu is laid out and drawn on the
@@ -15,6 +16,7 @@
 #include "option_rows.h"
 #include "imgui_internal.h"  // (NavCursorVisible)
 #include "osk.h"
+#include "product.h"
 #ifdef __APPLE__
 #include "imgui_impl_metal.h"
 #else
@@ -541,8 +543,8 @@ static void tab_quit(float scale, bool in_game) {
         ask = 0;
     const char *lost = in_game ? "\n\nProgress since your last save is lost." : "";
     char d1[200], d2[200];
-    snprintf(d1, sizeof d1, "Leaves the game and goes back to the LAS Recomp start screen.%s", lost);
-    snprintf(d2, sizeof d2, "Closes LAS Recomp.%s", lost);
+    snprintf(d1, sizeof d1, "Leaves the game and goes back to the " PRODUCT_NAME " start screen.%s", lost);
+    snprintf(d2, sizeof d2, "Closes " PRODUCT_NAME ".%s", lost);
     opt_begin("##quit", scale);
     opt_section("Quit");
     if (!ask) {

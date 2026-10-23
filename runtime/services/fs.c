@@ -1,3 +1,4 @@
+// Based on LAS Recomp by Peiikai (MIT); modified for BotW Recomp.
 // fsp-srv: RomFS as a raw storage image, save data and SD card backed by host directories.
 #include <dirent.h>
 #include <errno.h>

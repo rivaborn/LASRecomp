@@ -1,3 +1,4 @@
+// Based on LAS Recomp by Peiikai (MIT); modified for BotW Recomp.
 // Guest CPU state and helpers used by recompiled code.
 #pragma once
 #include <stddef.h>

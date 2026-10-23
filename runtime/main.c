@@ -1,4 +1,4 @@
-// LAS Recomp entry: load modules, set up the kernel, run nn::init::Start on the main thread.
+// BotW Recomp / LAS Recomp entry: load modules, set up the kernel, run nn::init::Start on the main thread.
 #include <SDL3/SDL.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -83,7 +83,7 @@ void reboot_test_frame(uint64_t frame) {
     next = strchr(next, ',');
     if (next) next++;
     if (!strcmp(what, "title")) { rt_request_reboot(RT_REBOOT_TITLE); return; }
-    // (a test run: the next boot's seed without saving it - larecomp.ini is the player's choice)
+    // (a test run: the next boot's seed without saving it - the settings file is the player's choice)
     strlcpy(g_settings.rando_seed, strcmp(what, "vanilla") ? what : "", sizeof g_settings.rando_seed);
     unsetenv("LARECOMP_RANDO_SEED");
     rt_request_reboot(RT_REBOOT_GAME);
@@ -142,8 +142,8 @@ static void boot(const char *root) {
     { extern void settings_load(void); settings_load(); }
     kernel_init();
     dispatch_init();
-    { extern void heapfail_init(void); heapfail_init(); }  // (LARECOMP_HEAP_FAIL: debugging)
-    { extern void expheap_check_init(void); expheap_check_init(); }  // (LARECOMP_EXPHEAP_CHECK: debugging)
+    { extern void heapfail_init(void); heapfail_init(); }  // (BOTW_RECOMP_HEAP_FAIL: debugging)
+    { extern void expheap_check_init(void); expheap_check_init(); }  // (BOTW_RECOMP_EXPHEAP_CHECK: debugging)
 
     uint32_t stack_size = 0x100000;
     int prio = 44;
@@ -195,9 +195,9 @@ int main(int argc, char **argv) {
             if (!realpath(argv[i + 1], nsp)) snprintf(nsp, sizeof nsp, "%s", argv[i + 1]);
             exit(launcher_extract_nsp_cli(nsp));
         }
-    extern bool start_point_init(void);  // LARECOMP_START (runtime/startpoint.c): boot from a saved point
+    extern bool start_point_init(void);  // BOTW_RECOMP_START (runtime/startpoint.c): boot from a saved point
     if (start_point_init()) skip_launcher = true;
-    extern void sampler_start(void);  // LARECOMP_SAMPLE (runtime/sampler.c): where the guest threads spend time
+    extern void sampler_start(void);  // BOTW_RECOMP_SAMPLE (runtime/sampler.c): where the guest threads spend time
     sampler_start();
     for (bool title = !skip_launcher;;) {
         if (title) {  // start screen (runtime/ui/launcher.mm): game files setup, seed choice, settings

@@ -1,3 +1,4 @@
+// New in BotW Recomp (based on LAS Recomp by Peiikai, MIT).
 // Game files from the player's own .nsp (games other than Link's Awakening; the start screen's Game Files page).
 //
 // The same steps as the nxdecomp pipeline's romfs stage (coding_workflow pipelines/switch): read the package's PFS0
